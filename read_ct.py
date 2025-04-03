@@ -3,7 +3,12 @@
 import os
 import pydicom as dcm
 import logging
+from typing import Dict
+from study_data import StudyData
+from ct_series import CTSeries
 
+# Setup logger
+logger = logging.getLogger(__name__)
 # Set up logging configuration
 def setup_logging(logfile = "dicom_filtering.log", file=True, console=False, overwrite=True):
     file = True if logfile else False
@@ -79,27 +84,58 @@ def _read_metadata(fp: str, verbose=True) -> dcm.Dataset:
         return None
 
 
-def read_metadata(root_dir: str, verbose=True) -> None:
+def read_metadata(root_dir: str, verbose=True) -> Dict[str, StudyData]:
     """
-    Recursively read metadata from DICOM files in a root directory and print the metadata for each SOP Class UID.
+    Recursively read metadata from DICOM files in a root directory and organize into studies and series.
+    
     Args:
         root_dir (str): The root directory containing DICOM files.
+        verbose (bool): Whether to log detailed information.
+    
+    Returns:
+        Dict[str, StudyData]: Dictionary mapping StudyInstanceUID to StudyData objects
     """
-    # Make one CT series per Series Instance UID
-    # Put references to the each series into the study data object.
+    # Dictionary to store study data objects, keyed by Study Instance UID
+    studies: Dict[str, StudyData] = {}
+    
     for dirpath, _, filenames in os.walk(root_dir):
         for filename in filenames:
             file_path = os.path.join(dirpath, filename)
             ds = _read_metadata(file_path, verbose=verbose)
             if ds is None:
                 continue
+                
             include = _filter_axial_ct_images(ds, file_path, verbose=verbose)
             if not include:
                 continue
             
-            # Check if the SeriesInstanceUID is already in the dictionary
-            # If not, create a new entry and initialize the study data object with a new series (i.e. give it a coordinate in the 4D arrays 4th dimension)
-            # If not make a new ct_series object and add it 
+            # Extract UIDs
+            study_instance_uid = ds.StudyInstanceUID
+            series_instance_uid = ds.SeriesInstanceUID
+            
+            # Get or create study object
+            if study_instance_uid not in studies:
+                study_description = getattr(ds, 'StudyDescription', None)
+                studies[study_instance_uid] = StudyData(study_instance_uid, study_description)
+                logger.info(f"Created new study: {study_instance_uid}")
+            
+            study = studies[study_instance_uid]
+            
+            # Get or create series object
+            series_description = getattr(ds, 'SeriesDescription', None)
+            series = study.get_or_create_series(series_instance_uid, series_description)
+            
+            # Add the image to the series
+            series.add_image(file_path, ds)
+    
+    # Extract metadata for all studies and series
+    for study in studies.values():
+        study.extract_metadata()
+        for series in study.series.values():
+            series.extract_metadata()
+    
+    logger.info(f"Found {len(studies)} studies with a total of {sum(len(s.series) for s in studies.values())} series")
+    return studies
             
 
             
