@@ -4,11 +4,15 @@ import os
 import pydicom as dcm
 import pandas as pd
 import numpy as np
-from logging_config import configure_module_logging
+from project_data import ProjectData
 
+from logging_config import configure_module_logging
 import logging
-# Set up logger for this module
-logger = logging.getLogger(__name__)
+
+if __name__ == "__main__":
+    logger = logging.getLogger('import_ct')
+else:
+    logger = logging.getLogger(__name__)
 
 # from study_data import StudyData
 # from ct_series import CTSeries
@@ -53,18 +57,19 @@ def _filter_axial_ct_images(ds: dcm.Dataset , fp: str) -> bool:
 
 def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
     """
-    Retrieve a value from a DICOM dataset by tag name.
+    Retrieve a value from a DICOM dataset by tag name or hex identifier.
     
-    This function safely accesses a DICOM tag by name and handles indexed values
-    for sequence-like tags. Type checking ensures valid inputs, and appropriate
-    error logging provides visibility into access issues.
+    This function safely accesses a DICOM tag by name or hex string representation
+    and handles indexed values for sequence-like tags. Type checking ensures valid
+    inputs, and appropriate error logging provides visibility into access issues.
     
     Parameters
     ----------
     ds : dcm.Dataset
         The DICOM dataset to extract the tag from.
     tag : str
-        The name of the DICOM tag to retrieve (e.g., 'PatientName', 'StudyInstanceUID').
+        The name of the DICOM tag to retrieve (e.g., 'PatientName') or 
+        a hex string for private tags (e.g., '0x00531042').
     position : int, optional
         If provided and the tag contains a sequence-like value (list, tuple, array),
         return the element at this position. If the tag value is a string or bytes,
@@ -79,6 +84,8 @@ def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
     
     Notes
     -----
+    - Private tags must be specified with a '0x' prefix followed by the tag number
+      as an 8-digit hex string (e.g., '0x00531042' for tag (0053,1042)).
     - Strings and bytes are treated as atomic values, not as sequences to be indexed,
       even if position is specified.
     - For sequence-like values (lists, tuples, arrays), the function will return
@@ -95,6 +102,9 @@ def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
     >>> 
     >>> # Get reconstruction kernel
     >>> kernel = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', 0)
+    >>>
+    >>> # Get Siemens private tag for iterative strength
+    >>> strength = _get_dicom_metadata_tag(ds, '0x00531042')
     """
     # Type checking
     if not isinstance(ds, dcm.Dataset):
@@ -110,6 +120,14 @@ def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
         return None
 
     try:
+        # If the first two characters in the tag are '0x', treat it as a private tag:
+        if tag.startswith("0x"):
+            try:
+                return ds[tag].value
+            except KeyError:
+                logger.warning(f"Private tag {tag} not found in dataset.")
+                return None
+        
         value = getattr(ds, tag, None)
         if value is None:
             logger.warning(f"Tag {tag} not found in dataset.")
@@ -137,7 +155,6 @@ def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
         logger.error(f"Error accessing tag {tag}: {str(e)}")
         return None
 
-
 def _read_metadata(fp: str) -> dcm.Dataset:
     # Attempt tp read the DICOM file and return the dataset
     try:
@@ -147,7 +164,70 @@ def _read_metadata(fp: str) -> dcm.Dataset:
         logger.warning(f"Non DICOM file excluded: {fp}, error using dcmread: {str(e)}")
         return None
 
+def _convert_datatypes(df) -> pd.DataFrame:
+    """Convert DataFrame columns to appropriate data types."""
+    if df.empty:
+        return df
+        
+    # Numerical columns that should be converted to float
+    float_columns = [
+        'slice_location',  'slice_thickness', 'data_collection_diameter', 'reconstruction_diameter', 
+        'gantry_tilt', 'table_height', 'distance_source_to_detector', 'distance_source_to_patient',
+        'focal_spot', 'exposure_time', 'exposure', 'pixel_spacing', 'detector_element_size', 'total_collimation_width', 
+        'table_speed', 'table_feed_per_rotation', 'spiral_pitch_factor', 'tube_current', 'ctdi_vol']
+    
+    
+    int_columns = ['instance_number', 'kvp','generator_power']
 
+    # Date columns that should be converted to datetime
+    date_columns = [
+        'study_date', 'series_date', 'acquition_date', 'content_date',
+        'last_calibration_date']
+    
+    # Time columns
+    time_columns = [
+        'study_time', 'series_time', 'acquisition_time', 'content_time',
+        'last_calibration_time']
+    
+    # Convert float columns
+    for col in float_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Convert int columns
+    for col in int_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').astype('Int64')
+
+    # Convert date columns (format YYYYMMDD)
+    for col in date_columns:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], format='%Y%m%d', errors='coerce')
+    
+    # Convert time columns (format HHMMSS.FFFFFF)
+    for col in time_columns:
+        if col in df.columns:
+            # First convert to string if not already
+            df[col] = df[col].astype(str)
+            
+            # Handle times with decimal fractions
+            df[col] = df[col].apply(lambda x: 
+                pd.to_datetime(
+                    x.split('.')[0].zfill(6), 
+                    format='%H%M%S',
+                    errors='coerce'
+                ).time() if pd.notna(x) and x != 'None' else None
+            )
+    
+    # Convert combined date and time columns
+    if 'study_date' in df.columns and 'study_time' in df.columns:
+        df['study_datetime'] = pd.to_datetime(
+            df['study_date'].dt.strftime('%Y-%m-%d') + ' ' + 
+            df['study_time'].apply(lambda x: str(x) if pd.notna(x) else ''),
+            errors='coerce'
+        )
+    
+    return df
 
 def scan_dicom_files(root_dir: str) -> pd.DataFrame:
     """
@@ -169,15 +249,11 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
             include = _filter_axial_ct_images(ds, file_path)
             if not include:
                 continue
-            
-            # Log the metadata for debugging:
-            logger.info(f"ds: {ds}")
 
             # Extract key metadata for sorting and grouping
             try:
                 
                 file_info = {'file_path': file_path}
-                file_info['convolution_kernel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=0)
                 # Common identifiers
                 file_info['study_uid'] = _get_dicom_metadata_tag(ds, 'StudyInstanceUID')
                 file_info['series_uid'] = _get_dicom_metadata_tag(ds, 'SeriesInstanceUID')
@@ -220,20 +296,26 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
                 file_info['slice_thickness'] = _get_dicom_metadata_tag(ds, 'SliceThickness')
                 file_info['data_collection_diameter'] =_get_dicom_metadata_tag(ds, 'DataCollectionDiameter')
                 file_info['reconstruction_diameter'] = _get_dicom_metadata_tag(ds, 'ReconstructionDiameter')
-                file_info['reconstruction_kernel'] = getattr(ds, 'ConvolutionKernel', None)
-                file_info['pixel_spacing'] = getattr(ds, 'PixelSpacing', None)
+                file_info['pixel_spacing'] = _get_dicom_metadata_tag(ds, 'PixelSpacing', position=0)
                 file_info['generator_power'] = _get_dicom_metadata_tag(ds, 'GeneratorPower')
-                file_info['focal_spot'] = _get_dicom_metadata_tag(ds, 'FocalSpot')
+                file_info['focal_spot'] = _get_dicom_metadata_tag(ds, 'FocalSpots', position=0)
                 file_info['exposure_time'] = _get_dicom_metadata_tag(ds, 'ExposureTime')
-
+                file_info['convolution_kernel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=0)
+                if file_info['manufacturer'] == 'SIEMENS':
+                    file_info['ADMIRE_level'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=1)
+                elif file_info['manufacturer'] == 'GE MEDICAL SYSTEMS':
+                    file_info['DLIR_level'] = _get_dicom_metadata_tag(ds, '0x00531042')
+                file_info['detector_element_size'] = _get_dicom_metadata_tag(ds, 'SingleCollimationWidth')
+                file_info['total_collimation_width'] = _get_dicom_metadata_tag(ds, 'TotalCollimationWidth')
+                file_info['table_speed'] = _get_dicom_metadata_tag(ds, 'TableSpeed')
+                file_info['table_feed_per_rotation'] = _get_dicom_metadata_tag(ds, 'TableFeedPerRotation')
+                file_info['spiral_pitch_factor'] = _get_dicom_metadata_tag(ds, 'SpiralPitchFactor')
+                file_info['dose_modulation_type'] = _get_dicom_metadata_tag(ds, 'ExposureModulationType')
                 
                 # add key technical parameters relevant for the image
                 file_info['tube_current'] = _get_dicom_metadata_tag(ds, 'XRayTubeCurrent')
                 file_info['exposure'] = _get_dicom_metadata_tag(ds, 'Exposure')
-
-                
-
-
+                file_info['ctdi_vol'] = _get_dicom_metadata_tag(ds, 'CTDIvol')
 
                 # Add image-specific information
                 file_info['image_type'] = tuple(getattr(ds, 'ImageType', []))
@@ -242,20 +324,10 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
                 file_info['instance_number'] = _get_dicom_metadata_tag(ds, 'InstanceNumber')
                 file_info['slice_location'] = _get_dicom_metadata_tag(ds, 'SliceLocation')
 
+                # Add all the metadata to the list
+                file_info['all_metadata'] = ds
+
                 file_data.append(file_info)
-                
-# (0018,1210) Convolution Kernel                  SH: ['Br40d', '1']
-# (0018,5100) Patient Position                    CS: 'FFS'
-# (0018,9306) Single Collimation Width            FD: 0.6
-# (0018,9307) Total Collimation Width             FD: 57.599999999999994
-# (0018,9309) Table Speed                         FD: 69.0
-# (0018,9310) Table Feed per Rotation             FD: 34.5
-# (0018,9311) Spiral Pitch Factor                 FD: 0.6
-# (0018,9313) Data Collection Center (Patient)    FD: [0.0, -202.5, 381.0]
-# (0018,9318) Reconstruction Target Center (Patie FD: [-2.0, -202.5, 381.0]
-# (0018,9323) Exposure Modulation Type            CS: 'XYZ_EC'
-# (0018,9324) Estimated Dose Saving               FD: 40.6109
-# (0018,9345) CTDIvol                             FD: 3.7187267895652174
 
             except Exception as e:
                 logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
@@ -264,84 +336,42 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
     # Create DataFrame
     if not file_data:
         return pd.DataFrame()
-        
+    logger.info(f"Found {len(file_data)} DICOM files with valid metadata") 
     df = pd.DataFrame(file_data)
-    
-    # Convert numerical columns
-    for col in ['slice_location', 'instance_number', 'kv', 'slice_thickness']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            
+
+    df = _convert_datatypes(df)
+
+    # Sort the Dataframe by series UID then by time then by z-axis
+    df.sort_values(by=['study_date', 'study_time', 'series_uid', 'slice_location'], inplace=True)
+    df.reset_index(drop=True, inplace=True)
+
     return df
 
-def read_metadata(root_dir: str) -> pd.DataFrame:
-    """
-    Recursively read metadata from DICOM files in a root directory and series.
-    
-    This function traverses the directory tree starting from a root directory.
-    It reads the metadata from the DICOM files.
-    If it finds a new series it creates a new 
+           
 
-    """
-    logger.info(f"Reading metadata from DICOM files in {root_dir}")    
+def main():
+    root_dir = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/"  # Replace with your root directory
+    logger.info(f"Reading metadata from DICOM files in {root_dir}")
     
     # Step 1: Scan the files into a dataframe
     file_df = scan_dicom_files(root_dir)
-    
-    # Initialize a dataframe to store information about the DICOM files
-    print('debug_stop')
-    return file_df
+
+    # Step 2: Create a ProjectData object
+    project_data = ProjectData()
+
+    # Step 3: Add each series with a unique series_instance_uid
+    for _, group in file_df.groupby('series_uid'):
+        project_data.add_series(group)
 
     
-    # for dirpath, _, filenames in os.walk(root_dir):
-    #     for filename in filenames:
-    #         file_path = os.path.join(dirpath, filename)
-    #         ds = _read_metadata(file_path)
-    #         if ds is None:
-    #             continue
-                
-    #         include = _filter_axial_ct_images(ds, file_path)
-    #         if not include:
-    #             continue
-            
-    #         # Extract UIDs
-    #         study_instance_uid = ds.StudyInstanceUID
-    #         series_instance_uid = ds.SeriesInstanceUID
-            
-    #         # Get or create study object
-    #         if study_instance_uid not in studies:
-    #             study_description = getattr(ds, 'StudyDescription', None)
-    #             studies[study_instance_uid] = StudyData(study_instance_uid, study_description)
-    #             logger.info(f"Created new study: {study_instance_uid}")
-            
-    #         study = studies[study_instance_uid]
-            
-    #         # Get or create series object
-    #         series_description = getattr(ds, 'SeriesDescription', None)
-    #         series = study.get_or_create_series(series_instance_uid, series_description)
-            
-    #         # Add the image to the series
-    #         series.add_image(file_path, ds)
+        
     
-    # # Extract metadata for all studies and series
-    # for study in studies.values():
-    #     study.extract_metadata()
-    #     for series in study.series.values():
-    #         series.extract_metadata()
-    
-    # logger.info(f"Found {len(studies)} studies with a total of {sum(len(s.series) for s in studies.values())} series")
-    # return studies
-            
-
-def main():
-    root_directory = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/"  # Replace with your root directory
-    read_metadata(root_directory)
 
            
 if __name__ == "__main__":
     configure_module_logging({
-        'read_ct': {'file': 'read_ct.log', 'level': logging.INFO, 'console': True},
-        'study_data': {'file': 'study_data.log', 'level': logging.INFO, 'console': True},
-        'ct_series': {'file': 'ct_series.log', 'level': logging.INFO, 'console': True},
-    })
+        'import_ct': {'file': 'import_ct.log', 'level': logging.DEBUG, 'console': True},
+        'project_data': {'file': 'project_data.log', 'level': logging.DEBUG, 'console': True},
+        'ct_series': {'file': 'ct_series.log', 'level': logging.DEBUG, 'console': True}}
+    )
     main()
