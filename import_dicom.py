@@ -19,36 +19,52 @@ else:
 #       RDSR files and dose report images.
 #       Also add functionality to import other modalities such as Interventional Radiology, etc.
 
-def _filter_axial_ct_images(ds: dcm.Dataset , fp: str) -> bool:
+def _filter_ct_images(ds: dcm.Dataset , fp: str, axial=True, dicomdir=False, rdsr=False, doserep=False, localizer=False) -> bool:
     # Check for DICOMDIR files
     if hasattr(ds, "FileSetID"):
-        logger.info(f"Dicomdir excluded: {fp} has the FileSetID tag: {ds.FileSetID}")
-        return False
+        if dicomdir:
+            return True
+        else:
+            logger.info(f"Dicomdir excluded: {fp}. Has the FileSetID tag: {ds.FileSetID}")
+            return False
 
     # Check for Radiation Dose Structured Report (RDSR):
     if hasattr(ds, "SOPClassUID") and (ds.SOPClassUID == "1.2.840.10008.5.1.4.1.1.88.67"):
-        logger.info(f"RDSR excluded: {fp} has the SOPClassUID tag: {ds.SOPClassUID}")
-        return False
+        if rdsr:
+            return True
+        else:
+            logger.info(f"RDSR excluded: {fp}. Has the SOPClassUID tag: {ds.SOPClassUID}")
+            return False
     
     # Check for Dose Report images (Secondary Capture):
     if hasattr(ds, "SOPClassUID") and (ds.SOPClassUID == "1.2.840.10008.5.1.4.1.1.7"):
-        logger.info(f"Dose Report (Secondary Capture) excluded: {fp} has the SOPClassUID tag: {ds.SOPClassUID}")
-        return False
+        if doserep:
+            return True
+        else:
+            logger.info(f"Dose Report (Secondary Capture) excluded: {fp} has the SOPClassUID tag: {ds.SOPClassUID}")
+            return False
     
     # Check for CT localizer images:
     if (hasattr(ds, "SOPClassUID") and 
         (ds.SOPClassUID == "1.2.840.10008.5.1.4.1.1.2") and
         hasattr(ds, "ImageType") and
         (ds.ImageType[2] == "LOCALIZER")):
-        logger.info(f"Localizer excluded: {fp} has the SOPClassUID tag: {ds.SOPClassUID} and ImageType tag: {ds.ImageType[2]}")
-        return False
+        if localizer:
+            return True
+        else:
+            logger.info(f"Localizer excluded: {fp}. Has the SOPClassUID tag: {ds.SOPClassUID}  and ImageType tag: {ds.ImageType[2]}")
+            return False
     
     # Check for axial CT images:
     if (hasattr(ds, "SOPClassUID") and 
         (ds.SOPClassUID == "1.2.840.10008.5.1.4.1.1.2") and
         hasattr(ds, "ImageType") and
         (ds.ImageType[2] == "AXIAL")):
-        return True
+        if axial:
+            return True
+        else:
+            logger.info(f"Axial CT image excluded: {fp} has the SOPClassUID tag: {ds.SOPClassUID}")
+            return False
     else:
         logger.info(f"Image {fp} is not cought by any filters")
         if hasattr(ds, "SOPClassUID"):
@@ -231,11 +247,11 @@ def _convert_datatypes(df) -> pd.DataFrame:
     
     return df
 
-def _extract_axial_ct_metadata(ds: dcm.Dataset, file_path: str) -> dict:
+def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
     # Extract key metadata for sorting and grouping
     try:
         
-        file_info = {'file_path': file_path}
+        file_info = {}
         # Common identifiers
         file_info['study_uid'] = _get_dicom_metadata_tag(ds, 'StudyInstanceUID')
         file_info['series_uid'] = _get_dicom_metadata_tag(ds, 'SeriesInstanceUID')
@@ -311,8 +327,7 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset, file_path: str) -> dict:
 
     except Exception as e:
         logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
-        continue
-
+        return None
     return file_info
 
 def scan_dicom_files(root_dir: str) -> pd.DataFrame:
@@ -321,23 +336,29 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
     
     Returns a DataFrame with one row per valid DICOM file.
     """
-    # List to hold dictionaries of file metadata
+    # List to hold dictionaries of file metadata.
+    # TODO: Currently, only supports axial CT images.
     file_data = []
     
     for dirpath, _, filenames in os.walk(root_dir):
         for filename in filenames:
             file_path = os.path.join(dirpath, filename)
             ds = _read_metadata(file_path)
+            file_info = {'filepath': file_path}
+            file_info['directory'] = dirpath
+            file_info['filename'] = filename
 
             if ds is None:
                 continue
                 
-            include = _filter_axial_ct_images(ds, file_path)
+            include = _filter_ct_images(ds, file_path, axial=True)  
             if not include:
                 continue
 
-            file_info = _extract_axial_ct_metadata(ds, file_path)
-            file_data.append(file_info)
+            dicom_info = _extract_axial_ct_metadata(ds)
+            if dicom_info is not None:
+                dicom_info = file_info | dicom_info
+                file_data.append(dicom_info)
     
     # Create DataFrame
     if not file_data:
@@ -352,8 +373,6 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
     df.reset_index(drop=True, inplace=True)
 
     return df
-
-           
 
 def main():
     root_dir = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/"  # Replace with your root directory
@@ -370,13 +389,7 @@ def main():
     #     project_data.add_series(group)
 
     # Add a stop to investigate the objects:
-    
-
-    
-        
-    
-
-           
+     
 if __name__ == "__main__":
     configure_module_logging({
         'import_dicom': {'file': 'import_dicom.log', 'level': logging.DEBUG, 'console': True},
