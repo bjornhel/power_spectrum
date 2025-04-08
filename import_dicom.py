@@ -10,12 +10,14 @@ from logging_config import configure_module_logging
 import logging
 
 if __name__ == "__main__":
-    logger = logging.getLogger('import_ct')
+    logger = logging.getLogger('import_dicom')
 else:
     logger = logging.getLogger(__name__)
 
-# from study_data import StudyData
-# from ct_series import CTSeries
+
+# TODO: Make this module a little more general by allowing the user to specify whether to import localizer images
+#       RDSR files and dose report images.
+#       Also add functionality to import other modalities such as Interventional Radiology, etc.
 
 def _filter_axial_ct_images(ds: dcm.Dataset , fp: str) -> bool:
     # Check for DICOMDIR files
@@ -229,6 +231,90 @@ def _convert_datatypes(df) -> pd.DataFrame:
     
     return df
 
+def _extract_axial_ct_metadata(ds: dcm.Dataset, file_path: str) -> dict:
+    # Extract key metadata for sorting and grouping
+    try:
+        
+        file_info = {'file_path': file_path}
+        # Common identifiers
+        file_info['study_uid'] = _get_dicom_metadata_tag(ds, 'StudyInstanceUID')
+        file_info['series_uid'] = _get_dicom_metadata_tag(ds, 'SeriesInstanceUID')
+        file_info['sop_uid'] = _get_dicom_metadata_tag(ds, 'SOPInstanceUID')
+        file_info['modality'] = _get_dicom_metadata_tag(ds, 'Modality')
+        file_info['station_name'] = _get_dicom_metadata_tag(ds, 'StationName')
+        file_info['manufacturer'] = _get_dicom_metadata_tag(ds, 'Manufacturer')
+        file_info['model'] = _get_dicom_metadata_tag(ds, 'ManufacturerModelName')
+        file_info['device_serial_number'] = _get_dicom_metadata_tag(ds, 'DeviceSerialNumber')
+        file_info['software_version'] = _get_dicom_metadata_tag(ds, 'SoftwareVersions')
+        file_info['last_calibration_date'] = _get_dicom_metadata_tag(ds, 'DateOfLastCalibration')
+        file_info['last_calibration_time'] = _get_dicom_metadata_tag(ds, 'TimeOfLastCalibration')
+
+        # Timing information
+        file_info['study_date'] = _get_dicom_metadata_tag(ds, 'StudyDate')
+        file_info['study_time'] = _get_dicom_metadata_tag(ds, 'StudyTime')
+        file_info['series_date'] = _get_dicom_metadata_tag(ds, 'SeriesDate')
+        file_info['series_time'] = _get_dicom_metadata_tag(ds, 'SeriesTime')
+        file_info['acquition_date'] = _get_dicom_metadata_tag(ds, 'AcquisitionDate')
+        file_info['acquisition_time'] = _get_dicom_metadata_tag(ds, 'AcquisitionTime')
+        file_info['content_date'] = _get_dicom_metadata_tag(ds, 'ContentDate')
+        file_info['content_time'] = _get_dicom_metadata_tag(ds, 'ContentTime')
+
+        # Information relevant to the series
+        file_info['study_description'] = _get_dicom_metadata_tag(ds, 'StudyDescription')
+        file_info['series_description'] = _get_dicom_metadata_tag(ds, 'SeriesDescription')
+        file_info['body_part'] = _get_dicom_metadata_tag(ds, 'BodyPartExamined')
+        file_info['protocol_name'] = _get_dicom_metadata_tag(ds, 'ProtocolName')
+
+        # Geometric information
+        file_info['distance_source_to_detector'] = _get_dicom_metadata_tag(ds, 'DistanceSourceToDetector')
+        file_info['distance_source_to_patient'] = _get_dicom_metadata_tag(ds, 'DistanceSourceToPatient')
+        file_info['gantry_tilt'] = _get_dicom_metadata_tag(ds, 'GantryDetectorTilt')
+        file_info['table_height'] = _get_dicom_metadata_tag(ds, 'TableHeight')
+        file_info['rotation_direction'] = _get_dicom_metadata_tag(ds, 'RotationDirection')
+
+        # Add key technical parameters relevant for the series
+        file_info['kvp'] = _get_dicom_metadata_tag(ds, 'KVP')
+        file_info['filter_type'] = _get_dicom_metadata_tag(ds, 'FilterType')
+        file_info['slice_thickness'] = _get_dicom_metadata_tag(ds, 'SliceThickness')
+        file_info['data_collection_diameter'] =_get_dicom_metadata_tag(ds, 'DataCollectionDiameter')
+        file_info['reconstruction_diameter'] = _get_dicom_metadata_tag(ds, 'ReconstructionDiameter')
+        file_info['pixel_spacing'] = _get_dicom_metadata_tag(ds, 'PixelSpacing', position=0)
+        file_info['generator_power'] = _get_dicom_metadata_tag(ds, 'GeneratorPower')
+        file_info['focal_spot'] = _get_dicom_metadata_tag(ds, 'FocalSpots', position=0)
+        file_info['exposure_time'] = _get_dicom_metadata_tag(ds, 'ExposureTime')
+        file_info['convolution_kernel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=0)
+        if file_info['manufacturer'] == 'SIEMENS':
+            file_info['ADMIRE_level'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=1)
+        elif file_info['manufacturer'] == 'GE MEDICAL SYSTEMS':
+            file_info['DLIR_level'] = _get_dicom_metadata_tag(ds, '0x00531042')
+        file_info['detector_element_size'] = _get_dicom_metadata_tag(ds, 'SingleCollimationWidth')
+        file_info['total_collimation_width'] = _get_dicom_metadata_tag(ds, 'TotalCollimationWidth')
+        file_info['table_speed'] = _get_dicom_metadata_tag(ds, 'TableSpeed')
+        file_info['table_feed_per_rotation'] = _get_dicom_metadata_tag(ds, 'TableFeedPerRotation')
+        file_info['spiral_pitch_factor'] = _get_dicom_metadata_tag(ds, 'SpiralPitchFactor')
+        file_info['dose_modulation_type'] = _get_dicom_metadata_tag(ds, 'ExposureModulationType')
+        
+        # add key technical parameters relevant for the image
+        file_info['tube_current'] = _get_dicom_metadata_tag(ds, 'XRayTubeCurrent')
+        file_info['exposure'] = _get_dicom_metadata_tag(ds, 'Exposure')
+        file_info['ctdi_vol'] = _get_dicom_metadata_tag(ds, 'CTDIvol')
+
+        # Add image-specific information
+        file_info['image_type'] = tuple(getattr(ds, 'ImageType', []))
+
+        # Positional information
+        file_info['instance_number'] = _get_dicom_metadata_tag(ds, 'InstanceNumber')
+        file_info['slice_location'] = _get_dicom_metadata_tag(ds, 'SliceLocation')
+
+        # Add all the metadata to the list
+        file_info['all_metadata'] = ds
+
+    except Exception as e:
+        logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
+        continue
+
+    return file_info
+
 def scan_dicom_files(root_dir: str) -> pd.DataFrame:
     """
     Scan all DICOM files in a directory tree and extract key metadata into a DataFrame.
@@ -250,88 +336,8 @@ def scan_dicom_files(root_dir: str) -> pd.DataFrame:
             if not include:
                 continue
 
-            # Extract key metadata for sorting and grouping
-            try:
-                
-                file_info = {'file_path': file_path}
-                # Common identifiers
-                file_info['study_uid'] = _get_dicom_metadata_tag(ds, 'StudyInstanceUID')
-                file_info['series_uid'] = _get_dicom_metadata_tag(ds, 'SeriesInstanceUID')
-                file_info['sop_uid'] = _get_dicom_metadata_tag(ds, 'SOPInstanceUID')
-                file_info['modality'] = _get_dicom_metadata_tag(ds, 'Modality')
-                file_info['station_name'] = _get_dicom_metadata_tag(ds, 'StationName')
-                file_info['manufacturer'] = _get_dicom_metadata_tag(ds, 'Manufacturer')
-                file_info['model'] = _get_dicom_metadata_tag(ds, 'ManufacturerModelName')
-                file_info['device_serial_number'] = _get_dicom_metadata_tag(ds, 'DeviceSerialNumber')
-                file_info['software_version'] = _get_dicom_metadata_tag(ds, 'SoftwareVersions')
-                file_info['last_calibration_date'] = _get_dicom_metadata_tag(ds, 'DateOfLastCalibration')
-                file_info['last_calibration_time'] = _get_dicom_metadata_tag(ds, 'TimeOfLastCalibration')
-
-                # Timing information
-                file_info['study_date'] = _get_dicom_metadata_tag(ds, 'StudyDate')
-                file_info['study_time'] = _get_dicom_metadata_tag(ds, 'StudyTime')
-                file_info['series_date'] = _get_dicom_metadata_tag(ds, 'SeriesDate')
-                file_info['series_time'] = _get_dicom_metadata_tag(ds, 'SeriesTime')
-                file_info['acquition_date'] = _get_dicom_metadata_tag(ds, 'AcquisitionDate')
-                file_info['acquisition_time'] = _get_dicom_metadata_tag(ds, 'AcquisitionTime')
-                file_info['content_date'] = _get_dicom_metadata_tag(ds, 'ContentDate')
-                file_info['content_time'] = _get_dicom_metadata_tag(ds, 'ContentTime')
-
-                # Information relevant to the series
-                file_info['study_description'] = _get_dicom_metadata_tag(ds, 'StudyDescription')
-                file_info['series_description'] = _get_dicom_metadata_tag(ds, 'SeriesDescription')
-                file_info['body_part'] = _get_dicom_metadata_tag(ds, 'BodyPartExamined')
-                file_info['protocol_name'] = _get_dicom_metadata_tag(ds, 'ProtocolName')
-
-                # Geometric information
-                file_info['distance_source_to_detector'] = _get_dicom_metadata_tag(ds, 'DistanceSourceToDetector')
-                file_info['distance_source_to_patient'] = _get_dicom_metadata_tag(ds, 'DistanceSourceToPatient')
-                file_info['gantry_tilt'] = _get_dicom_metadata_tag(ds, 'GantryDetectorTilt')
-                file_info['table_height'] = _get_dicom_metadata_tag(ds, 'TableHeight')
-                file_info['rotation_direction'] = _get_dicom_metadata_tag(ds, 'RotationDirection')
-
-                # Add key technical parameters relevant for the series
-                file_info['kvp'] = _get_dicom_metadata_tag(ds, 'KVP')
-                file_info['filter_type'] = _get_dicom_metadata_tag(ds, 'FilterType')
-                file_info['slice_thickness'] = _get_dicom_metadata_tag(ds, 'SliceThickness')
-                file_info['data_collection_diameter'] =_get_dicom_metadata_tag(ds, 'DataCollectionDiameter')
-                file_info['reconstruction_diameter'] = _get_dicom_metadata_tag(ds, 'ReconstructionDiameter')
-                file_info['pixel_spacing'] = _get_dicom_metadata_tag(ds, 'PixelSpacing', position=0)
-                file_info['generator_power'] = _get_dicom_metadata_tag(ds, 'GeneratorPower')
-                file_info['focal_spot'] = _get_dicom_metadata_tag(ds, 'FocalSpots', position=0)
-                file_info['exposure_time'] = _get_dicom_metadata_tag(ds, 'ExposureTime')
-                file_info['convolution_kernel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=0)
-                if file_info['manufacturer'] == 'SIEMENS':
-                    file_info['ADMIRE_level'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=1)
-                elif file_info['manufacturer'] == 'GE MEDICAL SYSTEMS':
-                    file_info['DLIR_level'] = _get_dicom_metadata_tag(ds, '0x00531042')
-                file_info['detector_element_size'] = _get_dicom_metadata_tag(ds, 'SingleCollimationWidth')
-                file_info['total_collimation_width'] = _get_dicom_metadata_tag(ds, 'TotalCollimationWidth')
-                file_info['table_speed'] = _get_dicom_metadata_tag(ds, 'TableSpeed')
-                file_info['table_feed_per_rotation'] = _get_dicom_metadata_tag(ds, 'TableFeedPerRotation')
-                file_info['spiral_pitch_factor'] = _get_dicom_metadata_tag(ds, 'SpiralPitchFactor')
-                file_info['dose_modulation_type'] = _get_dicom_metadata_tag(ds, 'ExposureModulationType')
-                
-                # add key technical parameters relevant for the image
-                file_info['tube_current'] = _get_dicom_metadata_tag(ds, 'XRayTubeCurrent')
-                file_info['exposure'] = _get_dicom_metadata_tag(ds, 'Exposure')
-                file_info['ctdi_vol'] = _get_dicom_metadata_tag(ds, 'CTDIvol')
-
-                # Add image-specific information
-                file_info['image_type'] = tuple(getattr(ds, 'ImageType', []))
-
-                # Positional information
-                file_info['instance_number'] = _get_dicom_metadata_tag(ds, 'InstanceNumber')
-                file_info['slice_location'] = _get_dicom_metadata_tag(ds, 'SliceLocation')
-
-                # Add all the metadata to the list
-                file_info['all_metadata'] = ds
-
-                file_data.append(file_info)
-
-            except Exception as e:
-                logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
-                continue
+            file_info = _extract_axial_ct_metadata(ds, file_path)
+            file_data.append(file_info)
     
     # Create DataFrame
     if not file_data:
@@ -357,11 +363,14 @@ def main():
     file_df = scan_dicom_files(root_dir)
 
     # Step 2: Create a ProjectData object
-    project_data = ProjectData()
+    project_data = ProjectData('Fantomscan')
 
     # Step 3: Add each series with a unique series_instance_uid
-    for _, group in file_df.groupby('series_uid'):
-        project_data.add_series(group)
+    # for _, group in file_df.groupby('series_uid'):
+    #     project_data.add_series(group)
+
+    # Add a stop to investigate the objects:
+    
 
     
         
@@ -370,8 +379,8 @@ def main():
            
 if __name__ == "__main__":
     configure_module_logging({
-        'import_ct': {'file': 'import_ct.log', 'level': logging.DEBUG, 'console': True},
+        'import_dicom': {'file': 'import_dicom.log', 'level': logging.DEBUG, 'console': True},
         'project_data': {'file': 'project_data.log', 'level': logging.DEBUG, 'console': True},
-        'ct_series': {'file': 'ct_series.log', 'level': logging.DEBUG, 'console': True}}
+        'ct_series':    {'file': 'ct_series.log',    'level': logging.DEBUG, 'console': True}}
     )
     main()
