@@ -19,6 +19,8 @@ else:
 #       RDSR files and dose report images.
 #       Also add functionality to import other modalities such as Interventional Radiology, etc.
 
+
+
 def _filter_ct_images(ds: dcm.Dataset , fp: str, axial=True, dicomdir=False, rdsr=False, doserep=False, localizer=False) -> bool:
     # Check for DICOMDIR files
     if hasattr(ds, "FileSetID"):
@@ -322,9 +324,6 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
         file_info['instance_number'] = _get_dicom_metadata_tag(ds, 'InstanceNumber')
         file_info['slice_location'] = _get_dicom_metadata_tag(ds, 'SliceLocation')
 
-        # Add all the metadata to the list
-        file_info['all_metadata'] = ds
-
     except Exception as e:
         logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
         return None
@@ -381,6 +380,9 @@ def main():
     # Step 1: Scan the files into a dataframe
     file_df = scan_dicom_files(root_dir)
 
+    # Save the dataframe to a CSV file
+    # file_df.to_csv('dicom_metadata.csv', index=False)
+
     # Step 2: Create a ProjectData object
     project_data = ProjectData('Fantomscan')
 
@@ -391,6 +393,7 @@ def main():
     # Add a stop to investigate the objects:
      
 if __name__ == "__main__":
+    # Setup logging
     configure_module_logging({
         'import_dicom': {'file': 'import_dicom.log', 'level': logging.DEBUG, 'console': True},
         'project_data': {'file': 'project_data.log', 'level': logging.DEBUG, 'console': True},
