@@ -16,10 +16,55 @@ class ProjectData:
         
         self.project_name = name
         logger.info(f"Created new ProjectData with name: {name}")
-        # Initialize an empty dataframe to hold the metadata that is common for the series along with an index:
-        self.series_overview = self.add_series(df=pd.DataFrame)
-        logger.info(f"Imported metadata for {len(self.series_overview)} series into project {self.project_name}")
+        
+        # Create the dataframe to store the overview of the series
+        self.series_overview = self._initialize_series_overview(df)
 
+        # Add the data from the series to the overview:
+        
+
+
+
+        
+
+    def _initialize_series_overview(self, df: pd.DataFrame):
+        """
+        Initialize the series overview dataframe.
+        This method is called in the constructor to set up the initial state of the series overview.
+        """
+        # Check if the dataframe is empty
+        if df.empty:
+            logger.warning("The provided dataframe is empty. No series overview will be created.")
+            return None
+        # Check if the dataframe contains study instance UID
+        if 'series_uid' not in df.columns:
+            logger.error("The dataframe does not contain 'StudyInstanceUID' column. Cannot initialize series overview.")
+            return None
+        
+        # Get a list of all the columns in the input ataframe
+        potential_columns = df.columns.tolist()
+        # Go through all the study instance UID's in the dataframe
+        for uid in df['series_uid'].unique():
+            study  = df[df['series_uid'] == uid]
+            # Go through all potential columns in the dataframe and check whether they have exacly one unique value:
+            for column in potential_columns:
+                # Check if the column exists in the dataframe
+                if column not in df.columns:
+                    logger.warning(f"Column {column} does not exist in the dataframe. Skipping.")
+                    continue
+                
+                # Check if the column has exactly one unique value
+                unique_values = study[column].unique()
+                # if the length of the unique values is not 1, remove from the list of potential columns
+                if len(unique_values) != 1:
+                    potential_columns.remove(column)
+                    logger.warning(f"Column {column} has {len(unique_values)} unique values. Removing from overview.")
+                
+        # Initialize a dataframe with the relevant columns
+        self.series_overview = pd.DataFrame(columns=potential_columns)
+        for column in potential_columns:
+            logger.info(f"{column} was added to the series overview dataframe.")
+    
     def add_series(self, df: pd.DataFrame):
         """
         Create several CT series from a dataframe containing dicom metadata.
@@ -29,6 +74,7 @@ class ProjectData:
         if df.empty:
             logger.warning("The provided dataframe is empty. No series will be added.")
             return
+
 
         # Create a CTSeries object for each unique Series Instance UID in the dataframe
         for series_uid in df['SeriesInstanceUID'].unique():

@@ -384,7 +384,7 @@ def main():
     # file_df.to_csv('dicom_metadata.csv', index=False)
 
     # Step 2: Create a ProjectData object
-    # project_data = ProjectData('Fantomscan')
+    # project_data = ProjectData('Fantomscan', file_df)
 
     # Step 3: Add each series with a unique series_instance_uid
     # for _, group in file_df.groupby('series_uid'):
