@@ -92,4 +92,4 @@ def configure_module_logging(module_configs):
             logger.addHandler(console_handler)
         
         # Disable propagation since we don't use any parent loggers
-        logger.propagate = False
+        logger.propagate = True

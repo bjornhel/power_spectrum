@@ -329,7 +329,7 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
         return None
     return file_info
 
-def scan_dicom_files(root_dir: str) -> pd.DataFrame:
+def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
     """
     Scan all DICOM files in a directory tree and extract key metadata into a DataFrame.
     
@@ -378,19 +378,20 @@ def main():
     logger.info(f"Reading metadata from DICOM files in {root_dir}")
     
     # Step 1: Scan the files into a dataframe
-    file_df = scan_dicom_files(root_dir)
+    file_df = scan_for_axial_ct_dicom_files(root_dir)
 
     # Save the dataframe to a CSV file
     # file_df.to_csv('dicom_metadata.csv', index=False)
 
     # Step 2: Create a ProjectData object
-    project_data = ProjectData('Fantomscan')
+    # project_data = ProjectData('Fantomscan')
 
     # Step 3: Add each series with a unique series_instance_uid
     # for _, group in file_df.groupby('series_uid'):
     #     project_data.add_series(group)
 
     # Add a stop to investigate the objects:
+    return file_df
      
 if __name__ == "__main__":
     # Setup logging
@@ -399,4 +400,4 @@ if __name__ == "__main__":
         'project_data': {'file': 'project_data.log', 'level': logging.DEBUG, 'console': True},
         'ct_series':    {'file': 'ct_series.log',    'level': logging.DEBUG, 'console': True}}
     )
-    main()
+    df = main()
