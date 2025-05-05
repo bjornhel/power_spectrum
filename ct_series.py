@@ -1,6 +1,7 @@
 import os
 import pydicom as dcm
 import numpy as np
+import pandas as pd
 from typing import Dict, List, Optional
 from dataclasses import dataclass
 
@@ -14,9 +15,9 @@ else:
 @dataclass
 class CTSeries:
     """Represents a series of CT images with the same Series Instance UID."""
-    
-   # Create a Series.
-   # Store the dataframe witht the info.
-   # Read the pixel data.
+    data: pd.DataFrame
+    # Create a Series.
+    # Store the dataframe witht the info.
+    # Read the pixel data.
    
 

@@ -327,6 +327,7 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
     except Exception as e:
         logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
         return None
+    
     return file_info
 
 def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
@@ -336,7 +337,6 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
     Returns a DataFrame with one row per valid DICOM file.
     """
     # List to hold dictionaries of file metadata.
-    # TODO: Currently, only supports axial CT images.
     file_data = []
     
     for dirpath, _, filenames in os.walk(root_dir):
@@ -384,14 +384,14 @@ def main():
     # file_df.to_csv('dicom_metadata.csv', index=False)
 
     # Step 2: Create a ProjectData object
-    # project_data = ProjectData('Fantomscan', file_df)
+    project_data = ProjectData('Fantomscan', file_df)
 
     # Step 3: Add each series with a unique series_instance_uid
     # for _, group in file_df.groupby('series_uid'):
     #     project_data.add_series(group)
 
     # Add a stop to investigate the objects:
-    return file_df
+    return project_data
      
 if __name__ == "__main__":
     # Setup logging
