@@ -373,12 +373,22 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
 
     return df
 
+def read_data(root_dir: str) -> pd.DataFrame:
+    """
+    Short funciton to read the data from a root directory.
+    """
+    logger.info(f"Reading metadata from DICOM files in {root_dir}")
+    file_df = scan_for_axial_ct_dicom_files(root_dir)
+    if file_df.empty:
+        logger.warning(f"No DICOM files found in {root_dir}")
+        return pd.DataFrame()
+    return file_df
+
+
 def main():
     root_dir = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/"  # Replace with your root directory
-    logger.info(f"Reading metadata from DICOM files in {root_dir}")
-    
     # Step 1: Scan the files into a dataframe
-    file_df = scan_for_axial_ct_dicom_files(root_dir)
+    file_df = read_data(root_dir)
 
     # Save the dataframe to a CSV file
     # file_df.to_csv('dicom_metadata.csv', index=False)
@@ -391,7 +401,7 @@ def main():
     #     project_data.add_series(group)
 
     # Add a stop to investigate the objects:
-    return project_data
+    return file_df
      
 if __name__ == "__main__":
     # Setup logging

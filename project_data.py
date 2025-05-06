@@ -87,7 +87,7 @@ class ProjectData:
             new_series = CTSeries(series_df)
             self.list_of_series.append(new_series)
             # Get the index of the series from the list of series
-            series_index = self.list_of_series.index(new_series)
+            series_index = len(self.list_of_series) -1
             logger.info(f"Added series {series_index} with series uid: {series_uid} to project {self.project_name}")
             # Add the series index to the series overview dataframe
             new_row = {'series_index': series_index}
