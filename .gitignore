@@ -2,3 +2,4 @@ Fantomscan/
 __pycache__/
 *.log
 *.csv
+*.pkl
