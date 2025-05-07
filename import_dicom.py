@@ -316,7 +316,16 @@ def _convert_datatypes(df) -> pd.DataFrame:
         'study_time', 'series_time', 'acquisition_time', 'content_time',
         'last_calibration_time']
     
-    ignored_columns = []
+    ignored_columns = ['filepath', 'directory', 'filename', 
+                       'study_uid','series_uid', 'sop_uid', 
+                       'modality', 'station_name', 'manufacturer', 'model', 
+                       'device_serial_number', 'software_version', 
+                       'study_description', 'series_description', 
+                       'body_part', 'protocol_name', 
+                       'rotation_direction', 'filter_type', 'convolution_kernel', 
+                       'dose_modulation_type', 'image_type', 
+                       'ADMIRE_level', 
+                       'study_datetime']
     
     # Convert float columns
     for col in float_columns:
@@ -362,7 +371,8 @@ def _convert_datatypes(df) -> pd.DataFrame:
     remaining_columns = [col for col in all_columns if col not in float_columns + int_columns + date_columns + time_columns + ignored_columns]
     if remaining_columns:
         logger.warning(f"Columns not converted or explicitly ignored, please investigate: {remaining_columns}")
-
+    else:
+        logger.info("All columns converted or explicitly ignored")
     return df
 
 def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
