@@ -1,5 +1,28 @@
-# a module to read DICOM metadata and filter axial CT images
-# -*- coding: utf-8 -*-
+"""DICOM metadata extraction and CT image filtering.
+
+This module provides functionality to scan directories for DICOM files, filter for
+axial CT images, and extract standardized metadata into structured datasets. It supports
+identification of various DICOM types and extraction of both common and vendor-specific tags.
+
+Functions:
+    scan_for_axial_ct_dicom_files: Scan directories recursively for axial CT DICOM files
+    read_data: Simplified interface to scan for DICOM metadata
+    main: Execute standard DICOM processing workflow
+    
+Private Functions:
+    _filter_ct_images: Filter DICOM files by type
+    _get_dicom_metadata_tag: Safely retrieve values from DICOM datasets
+    _read_metadata: Read DICOM metadata without loading pixel data
+    _convert_datatypes: Convert DataFrame columns to appropriate data types
+    _extract_axial_ct_metadata: Extract standardized metadata from DICOM datasets
+    
+Dependencies:
+    pydicom: For reading and manipulating DICOM files
+    pandas: For data manipulation and storage
+    logging: For activity logging
+    project_data: For organizing extracted metadata
+"""
+
 import os
 import pydicom as dcm
 import pandas as pd
@@ -15,13 +38,47 @@ else:
     logger = logging.getLogger(__name__)
 
 
-# TODO: Make this module a little more general by allowing the user to specify whether to import localizer images
-#       RDSR files and dose report images.
-#       Also add functionality to import other modalities such as Interventional Radiology, etc.
-
-
-
 def _filter_ct_images(ds: dcm.Dataset , fp: str, axial=True, dicomdir=False, rdsr=False, doserep=False, localizer=False) -> bool:
+    """Filter DICOM files by type, returning True only for files matching requested criteria.
+    
+    This function examines DICOM attributes to determine the type of DICOM file and
+    filters them based on the provided parameters. It checks for specific attributes
+    like FileSetID and SOPClassUID to identify different DICOM file types.
+    
+    Parameters
+    ----------
+    ds : dcm.Dataset
+        The DICOM dataset object to evaluate.
+    fp : str
+        File path of the DICOM file (used for logging purposes).
+    axial : bool, default=True
+        Include axial CT images.
+    dicomdir : bool, default=False
+        Include DICOMDIR files.
+    rdsr : bool, default=False
+        Include Radiation Dose Structured Reports.
+    doserep : bool, default=False
+        Include Dose Report images (Secondary Capture objects).
+    localizer : bool, default=False
+        Include CT localizer images.
+    
+    Returns
+    -------
+    bool
+        True if the file should be included based on the specified criteria,
+        False otherwise.
+        
+    Notes
+    -----
+    - Checks for the following DICOM file types:
+      * DICOMDIR: Files with the FileSetID attribute
+      * RDSR: Files with SOPClassUID = "1.2.840.10008.5.1.4.1.1.88.67"
+      * Dose Reports: Files with SOPClassUID = "1.2.840.10008.5.1.4.1.1.7"
+      * CT Localizers: Files with SOPClassUID = "1.2.840.10008.5.1.4.1.1.2" and ImageType[2] = "LOCALIZER"
+      * Axial CT Images: Files with SOPClassUID = "1.2.840.10008.5.1.4.1.1.2" and ImageType[2] = "AXIAL"
+    - Logs detailed information about excluded files for debugging purposes.
+    """
+    
     # Check for DICOMDIR files
     if hasattr(ds, "FileSetID"):
         if dicomdir:
@@ -176,6 +233,29 @@ def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
         return None
 
 def _read_metadata(fp: str) -> dcm.Dataset:
+    """Read DICOM metadata from a file without loading pixel data.
+    
+    This function attempts to read a file as DICOM, using PyDicom's stop_before_pixels
+    option to optimize memory usage when only metadata is needed. If the file cannot
+    be read as a DICOM file, the function logs a warning and returns None.
+    
+    Parameters
+    ----------
+    fp : str
+        File path to the potential DICOM file to read.
+    
+    Returns
+    -------
+    dcm.Dataset or None
+        A PyDicom dataset containing the file's metadata if successfully read,
+        or None if the file is not a valid DICOM file.
+    
+    Notes
+    -----
+    - Uses stop_before_pixels=True to avoid loading potentially large pixel data
+    - Logs warnings for files that cannot be read as DICOM
+    - Any exception during reading is caught and results in None being returned
+    """
     # Attempt tp read the DICOM file and return the dataset
     try:
         ds = dcm.dcmread(fp, stop_before_pixels=True)
@@ -185,10 +265,37 @@ def _read_metadata(fp: str) -> dcm.Dataset:
         return None
 
 def _convert_datatypes(df) -> pd.DataFrame:
-    """Convert DataFrame columns to appropriate data types."""
+    """Convert DataFrame columns to appropriate data types based on content.
+    
+    This function transforms columns in the DICOM metadata DataFrame to their 
+    appropriate data types, including numeric values, dates, and times. It handles
+    potential missing columns gracefully and uses pandas' type conversion functions
+    with error handling.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing DICOM metadata with columns to be converted.
+        If empty, the function returns it unchanged.
+    
+    Returns
+    -------
+    pd.DataFrame
+        The input DataFrame with columns converted to appropriate types.
+        
+    Notes
+    -----
+    - Float columns: Includes measurements and physical parameters
+    - Integer columns: Includes counters and discrete values
+    - Date columns: Converts from YYYYMMDD format to datetime objects
+    - Time columns: Converts from HHMMSS.FFFFFF format to time objects
+    - Creates a combined 'study_datetime' column when both date and time are available
+    - Uses coercion to handle conversion errors gracefully
+    - Logs warnings for columns that weren't converted or explicitly ignored
+    """
     if df.empty:
         return df
-        
+
     # Numerical columns that should be converted to float
     float_columns = [
         'slice_location',  'slice_thickness', 'data_collection_diameter', 'reconstruction_diameter', 
@@ -208,6 +315,8 @@ def _convert_datatypes(df) -> pd.DataFrame:
     time_columns = [
         'study_time', 'series_time', 'acquisition_time', 'content_time',
         'last_calibration_time']
+    
+    ignored_columns = []
     
     # Convert float columns
     for col in float_columns:
@@ -247,94 +356,170 @@ def _convert_datatypes(df) -> pd.DataFrame:
             errors='coerce'
         )
     
+    # Log the columns not converted
+    all_columns = df.columns.tolist()
+    # remove all columns that are not in any lists
+    remaining_columns = [col for col in all_columns if col not in float_columns + int_columns + date_columns + time_columns + ignored_columns]
+    if remaining_columns:
+        logger.warning(f"Columns not converted or explicitly ignored, please investigate: {remaining_columns}")
+
     return df
 
 def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
-    # Extract key metadata for sorting and grouping
-    try:
+    """Extract key metadata from a DICOM dataset for axial CT images.
+    
+    This function uses a tag mapping approach to systematically extract relevant 
+    metadata from a DICOM dataset. It supports both standard and vendor-specific
+    tags, handling extraction errors gracefully to ensure the process continues
+    even if some tags are missing.
+    
+    Parameters
+    ----------
+    ds : dcm.Dataset
+        The DICOM dataset from which to extract metadata.
+    
+    Returns
+    -------
+    dict or None
+        A dictionary containing extracted DICOM metadata with standardized keys,
+        or None if a critical error occurs during extraction.
         
-        file_info = {}
+    Notes
+    -----
+    - Extracts common identifiers, timing information, series details, and technical parameters
+    - Groups tags by category (identifiers, timing, geometric, technical)
+    - Handles vendor-specific tags for Siemens (ADMIRE level) and GE (DLIR level)
+    - Logs debug information for individual tag extraction failures
+    - Handles errors gracefully to preserve as much metadata as possible
+    """
+    # Define tag mappings (output_key: (dicom_tag, position))
+    tag_mappings = {
         # Common identifiers
-        file_info['study_uid'] = _get_dicom_metadata_tag(ds, 'StudyInstanceUID')
-        file_info['series_uid'] = _get_dicom_metadata_tag(ds, 'SeriesInstanceUID')
-        file_info['sop_uid'] = _get_dicom_metadata_tag(ds, 'SOPInstanceUID')
-        file_info['modality'] = _get_dicom_metadata_tag(ds, 'Modality')
-        file_info['station_name'] = _get_dicom_metadata_tag(ds, 'StationName')
-        file_info['manufacturer'] = _get_dicom_metadata_tag(ds, 'Manufacturer')
-        file_info['model'] = _get_dicom_metadata_tag(ds, 'ManufacturerModelName')
-        file_info['device_serial_number'] = _get_dicom_metadata_tag(ds, 'DeviceSerialNumber')
-        file_info['software_version'] = _get_dicom_metadata_tag(ds, 'SoftwareVersions')
-        file_info['last_calibration_date'] = _get_dicom_metadata_tag(ds, 'DateOfLastCalibration')
-        file_info['last_calibration_time'] = _get_dicom_metadata_tag(ds, 'TimeOfLastCalibration')
+        'study_uid': ('StudyInstanceUID', None),
+        'series_uid': ('SeriesInstanceUID', None),
+        'sop_uid': ('SOPInstanceUID', None),
+        'modality': ('Modality', None),
+        'station_name': ('StationName', None),
+        'manufacturer': ('Manufacturer', None),
+        'model': ('ManufacturerModelName', None),
+        'device_serial_number': ('DeviceSerialNumber', None),
+        'software_version': ('SoftwareVersions', None),
+        'last_calibration_date': ('DateOfLastCalibration', None),
+        'last_calibration_time': ('TimeOfLastCalibration', None),
 
         # Timing information
-        file_info['study_date'] = _get_dicom_metadata_tag(ds, 'StudyDate')
-        file_info['study_time'] = _get_dicom_metadata_tag(ds, 'StudyTime')
-        file_info['series_date'] = _get_dicom_metadata_tag(ds, 'SeriesDate')
-        file_info['series_time'] = _get_dicom_metadata_tag(ds, 'SeriesTime')
-        file_info['acquition_date'] = _get_dicom_metadata_tag(ds, 'AcquisitionDate')
-        file_info['acquisition_time'] = _get_dicom_metadata_tag(ds, 'AcquisitionTime')
-        file_info['content_date'] = _get_dicom_metadata_tag(ds, 'ContentDate')
-        file_info['content_time'] = _get_dicom_metadata_tag(ds, 'ContentTime')
+        'study_date': ('StudyDate', None),
+        'study_time': ('StudyTime', None),
+        'series_date': ('SeriesDate', None),
+        'series_time': ('SeriesTime', None),
+        'acquition_date': ('AcquisitionDate', None),
+        'acquisition_time': ('AcquisitionTime', None),
+        'content_date': ('ContentDate', None),
+        'content_time': ('ContentTime', None),
 
         # Information relevant to the series
-        file_info['study_description'] = _get_dicom_metadata_tag(ds, 'StudyDescription')
-        file_info['series_description'] = _get_dicom_metadata_tag(ds, 'SeriesDescription')
-        file_info['body_part'] = _get_dicom_metadata_tag(ds, 'BodyPartExamined')
-        file_info['protocol_name'] = _get_dicom_metadata_tag(ds, 'ProtocolName')
+        'study_description': ('StudyDescription', None),
+        'series_description': ('SeriesDescription', None),
+        'body_part': ('BodyPartExamined', None),
+        'protocol_name': ('ProtocolName', None),
 
         # Geometric information
-        file_info['distance_source_to_detector'] = _get_dicom_metadata_tag(ds, 'DistanceSourceToDetector')
-        file_info['distance_source_to_patient'] = _get_dicom_metadata_tag(ds, 'DistanceSourceToPatient')
-        file_info['gantry_tilt'] = _get_dicom_metadata_tag(ds, 'GantryDetectorTilt')
-        file_info['table_height'] = _get_dicom_metadata_tag(ds, 'TableHeight')
-        file_info['rotation_direction'] = _get_dicom_metadata_tag(ds, 'RotationDirection')
+        'distance_source_to_detector': ('DistanceSourceToDetector', None),
+        'distance_source_to_patient': ('DistanceSourceToPatient', None),
+        'gantry_tilt': ('GantryDetectorTilt', None),
+        'table_height': ('TableHeight', None),
+        'rotation_direction': ('RotationDirection', None),
 
-        # Add key technical parameters relevant for the series
-        file_info['kvp'] = _get_dicom_metadata_tag(ds, 'KVP')
-        file_info['filter_type'] = _get_dicom_metadata_tag(ds, 'FilterType')
-        file_info['slice_thickness'] = _get_dicom_metadata_tag(ds, 'SliceThickness')
-        file_info['data_collection_diameter'] =_get_dicom_metadata_tag(ds, 'DataCollectionDiameter')
-        file_info['reconstruction_diameter'] = _get_dicom_metadata_tag(ds, 'ReconstructionDiameter')
-        file_info['pixel_spacing'] = _get_dicom_metadata_tag(ds, 'PixelSpacing', position=0)
-        file_info['generator_power'] = _get_dicom_metadata_tag(ds, 'GeneratorPower')
-        file_info['focal_spot'] = _get_dicom_metadata_tag(ds, 'FocalSpots', position=0)
-        file_info['exposure_time'] = _get_dicom_metadata_tag(ds, 'ExposureTime')
-        file_info['convolution_kernel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=0)
-        if file_info['manufacturer'] == 'SIEMENS':
-            file_info['ADMIRE_level'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', position=1)
-        elif file_info['manufacturer'] == 'GE MEDICAL SYSTEMS':
-            file_info['DLIR_level'] = _get_dicom_metadata_tag(ds, '0x00531042')
-        file_info['detector_element_size'] = _get_dicom_metadata_tag(ds, 'SingleCollimationWidth')
-        file_info['total_collimation_width'] = _get_dicom_metadata_tag(ds, 'TotalCollimationWidth')
-        file_info['table_speed'] = _get_dicom_metadata_tag(ds, 'TableSpeed')
-        file_info['table_feed_per_rotation'] = _get_dicom_metadata_tag(ds, 'TableFeedPerRotation')
-        file_info['spiral_pitch_factor'] = _get_dicom_metadata_tag(ds, 'SpiralPitchFactor')
-        file_info['dose_modulation_type'] = _get_dicom_metadata_tag(ds, 'ExposureModulationType')
+        # Technical parameters relevant for the series
+        'kvp': ('KVP', None),
+        'filter_type': ('FilterType', None),
+        'slice_thickness': ('SliceThickness', None),
+        'data_collection_diameter': ('DataCollectionDiameter', None),
+        'reconstruction_diameter': ('ReconstructionDiameter', None),
+        'pixel_spacing': ('PixelSpacing', 0),
+        'generator_power': ('GeneratorPower', None),
+        'focal_spot': ('FocalSpots', 0),
+        'exposure_time': ('ExposureTime', None),
+        'convolution_kernel': ('ConvolutionKernel', 0),
+        'detector_element_size': ('SingleCollimationWidth', None),
+        'total_collimation_width': ('TotalCollimationWidth', None),
+        'table_speed': ('TableSpeed', None),
+        'table_feed_per_rotation': ('TableFeedPerRotation', None),
+        'spiral_pitch_factor': ('SpiralPitchFactor', None),
+        'dose_modulation_type': ('ExposureModulationType', None),
+
+        # Technical parameters relevant for the image
+        'tube_current': ('XRayTubeCurrent', None),
+        'exposure': ('Exposure', None),
+        'ctdi_vol': ('CTDIvol', None),
         
-        # add key technical parameters relevant for the image
-        file_info['tube_current'] = _get_dicom_metadata_tag(ds, 'XRayTubeCurrent')
-        file_info['exposure'] = _get_dicom_metadata_tag(ds, 'Exposure')
-        file_info['ctdi_vol'] = _get_dicom_metadata_tag(ds, 'CTDIvol')
-
-        # Add image-specific information
-        file_info['image_type'] = tuple(getattr(ds, 'ImageType', []))
-
         # Positional information
-        file_info['instance_number'] = _get_dicom_metadata_tag(ds, 'InstanceNumber')
-        file_info['slice_location'] = _get_dicom_metadata_tag(ds, 'SliceLocation')
+        'instance_number': ('InstanceNumber', None),
+        'slice_location': ('SliceLocation', None),
+    }
 
+    # Extract all metadata using the mappings
+    file_info = {}
+    
+    try:
+        # Extract basic tags
+        for output_key, (tag_name, position) in tag_mappings.items():
+            try:
+                file_info[output_key] = _get_dicom_metadata_tag(ds, tag_name, position)
+            except Exception as e:
+                logger.debug(f"Error extracting {output_key} ({tag_name}): {str(e)}")
+                # Continue with other tags
+        
+        # Special case: image_type
+        try:
+            file_info['image_type'] = tuple(getattr(ds, 'ImageType', []))
+        except Exception as e:
+            logger.debug(f"Error extracting image_type: {str(e)}")
+            file_info['image_type'] = tuple()
+        
+        # Vendor-specific tags based on manufacturer
+        try:
+            if file_info.get('manufacturer') == 'SIEMENS':
+                file_info['ADMIRE_level'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', 1)
+            elif file_info.get('manufacturer') == 'GE MEDICAL SYSTEMS':
+                file_info['DLIR_level'] = _get_dicom_metadata_tag(ds, '0x00531042')
+        except Exception as e:
+            logger.debug(f"Error extracting vendor-specific tags: {str(e)}")
+    
     except Exception as e:
-        logger.warning(f"Error extracting metadata from {file_path}: {str(e)}")
+        logger.warning(f"Error extracting metadata: {str(e)}")
         return None
     
-    return file_info
-
+    return file_info   
+ 
 def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
-    """
-    Scan all DICOM files in a directory tree and extract key metadata into a DataFrame.
+    """Scan a directory recursively for axial CT DICOM files and extract their metadata.
     
-    Returns a DataFrame with one row per valid DICOM file.
+    This function traverses a directory tree to find and process DICOM files
+    containing axial CT images. For each valid file, it extracts metadata using
+    helper functions, builds a structured dataset, and returns the results in a
+    sorted DataFrame.
+    
+    Parameters
+    ----------
+    root_dir : str
+        Path to the root directory to scan for DICOM files
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing metadata from all valid axial CT DICOM files,
+        with one row per file. Empty DataFrame if no valid files are found.
+        
+    Notes
+    -----
+    - Uses _read_metadata() to read DICOM files without loading pixel data
+    - Uses _filter_ct_images() to identify and select axial CT images
+    - Uses _extract_axial_ct_metadata() to extract standardized metadata
+    - Uses _convert_datatypes() to convert columns to appropriate data types
+    - Adds filepath, directory, and filename columns to track file origins
+    - Sorts results by study_date, study_time, series_uid, and slice_location
+    - Returns empty DataFrame if no valid DICOM files found
     """
     # List to hold dictionaries of file metadata.
     file_data = []
@@ -374,8 +559,28 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
     return df
 
 def read_data(root_dir: str) -> pd.DataFrame:
-    """
-    Short funciton to read the data from a root directory.
+    """Read DICOM metadata from the specified directory.
+    
+    This function scans a directory tree for axial CT DICOM files and extracts
+    their metadata into a structured DataFrame. It serves as a convenient wrapper
+    around the more detailed scan_for_axial_ct_dicom_files function.
+    
+    Parameters
+    ----------
+    root_dir : str
+        Path to the root directory to scan for DICOM files
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing metadata from all valid axial CT DICOM files.
+        Returns an empty DataFrame if no valid DICOM files are found.
+        
+    Notes
+    -----
+    - Logs information about the scan process
+    - Delegates to scan_for_axial_ct_dicom_files for the actual scanning
+    - Provides appropriate warning messages when no files are found
     """
     logger.info(f"Reading metadata from DICOM files in {root_dir}")
     file_df = scan_for_axial_ct_dicom_files(root_dir)
@@ -384,8 +589,26 @@ def read_data(root_dir: str) -> pd.DataFrame:
         return pd.DataFrame()
     return file_df
 
-
 def main():
+    """Execute the main workflow for DICOM processing.
+    
+    This function demonstrates the standard workflow for DICOM data processing:
+    1. Reads DICOM metadata from a specified directory
+    2. Creates a ProjectData object to organize the extracted metadata
+    3. Returns the DataFrame for further analysis or inspection
+    
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing metadata from all valid axial CT DICOM files.
+        
+    Notes
+    -----
+    - Uses a hardcoded directory path for DICOM file scanning
+    - Creates a ProjectData object named 'Fantomscan'
+    - Contains commented-out code for saving to CSV and processing by series_uid
+    - Primarily intended for demonstration and debugging purposes
+    """
     root_dir = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/"  # Replace with your root directory
     # Step 1: Scan the files into a dataframe
     file_df = read_data(root_dir)
@@ -404,6 +627,24 @@ def main():
     return file_df
      
 if __name__ == "__main__":
+    """Execute the DICOM processing workflow when run as a script.
+    
+    This block configures logging for all related modules and runs the main 
+    function to process DICOM files. The resulting DataFrame is stored in 
+    the 'df' variable for interactive inspection or further processing.
+    
+    Configuration includes:
+    - import_dicom: DEBUG level logging to both file and console
+    - project_data: DEBUG level logging to both file and console
+    - ct_series: DEBUG level logging to both file and console
+    
+    Notes
+    -----
+    - Each module gets its own log file with the module name
+    - Console output is enabled for interactive monitoring
+    - The main() function's return value is stored in the df variable
+    - This setup is intended for direct script execution, not for imports
+    """
     # Setup logging
     configure_module_logging({
         'import_dicom': {'file': 'import_dicom.log', 'level': logging.DEBUG, 'console': True},
