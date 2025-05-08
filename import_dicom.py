@@ -619,7 +619,7 @@ def main():
     - Contains commented-out code for saving to CSV and processing by series_uid
     - Primarily intended for demonstration and debugging purposes
     """
-    root_dir = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/"  # Replace with your root directory
+    root_dir = r"/home/bhosteras/Kode/power_spectrum/Fantomscan/Claripy Eple og Mandarin/"  # Replace with your root directory
     # Step 1: Scan the files into a dataframe
     file_df = read_data(root_dir)
 
