@@ -207,7 +207,7 @@ def _get_dicom_metadata_tag(ds: dcm.Dataset, tag: str, position=None) -> str:
         
         value = getattr(ds, tag, None)
         if value is None:
-            logger.warning(f"Tag {tag} not found in dataset.")
+            # logger.warning(f"Tag {tag} not found in dataset.")
             return None
 
         # If the position is 0 and the value is a string, return the value directly
@@ -465,7 +465,7 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
         
         # Positional information
         'instance_number': ('InstanceNumber', None),
-        'slice_location': ('SliceLocation', None),
+        'SliceLocation': ('SliceLocation', None),
     }
 
     # Extract all metadata using the mappings
@@ -528,7 +528,7 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
     - Uses _extract_axial_ct_metadata() to extract standardized metadata
     - Uses _convert_datatypes() to convert columns to appropriate data types
     - Adds filepath, directory, and filename columns to track file origins
-    - Sorts results by study_date, study_time, series_uid, and slice_location
+    - Sorts results by study_date, study_time, series_uid, and SliceLocation
     - Returns empty DataFrame if no valid DICOM files found
     """
     # List to hold dictionaries of file metadata.
@@ -563,7 +563,7 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
     df = _convert_datatypes(df)
 
     # Sort the Dataframe by series UID then by time then by z-axis
-    df.sort_values(by=['study_date', 'study_time', 'series_uid', 'slice_location'], inplace=True)
+    df.sort_values(by=['study_date', 'study_time', 'series_uid', 'SliceLocation'], inplace=True)
     df.reset_index(drop=True, inplace=True)
 
     return df

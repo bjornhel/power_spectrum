@@ -269,5 +269,23 @@ class ProjectData:
         
         logger.info(f"Added {len(self.list_of_series)} series to project {self.project_name}")
 
-
+    def get_list(self) -> list[CTSeries]:
+        """Get the list of CTSeries objects in this project.
+        
+        Returns
+        -------
+        list[CTSeries]
+            List of CTSeries objects associated with this project.
+        """
+        return self.list_of_series
+    
+    def get_overview(self) -> pd.DataFrame:
+        """Get the series overview DataFrame.
+        
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing summary information about each CTSeries in this project.
+        """
+        return self.series_overview
     
