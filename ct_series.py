@@ -31,11 +31,11 @@ class CTSeries:
                 self.data = self.data.sort_values(by='SliceLocation')
             # Fill in the z_location
             self.z_location = self.data['SliceLocation'].tolist()
-        if 'tube_current' in self.data.columns: 
-            self.mA_curve = self.data['tube_current'].tolist()
+        if 'XRayTubeCurrent' in self.data.columns: 
+            self.mA_curve = self.data['XRayTubeCurrent'].tolist()
         # Get the CTDIvol curve if it exists
-        if 'ctdi_vol' in self.data.columns:
-            self.ctdi_vol_curve = self.data['ctdi_vol'].tolist()
+        if 'CTDIvol' in self.data.columns:
+            self.ctdi_vol_curve = self.data['CTDIvol'].tolist()
             
         
 

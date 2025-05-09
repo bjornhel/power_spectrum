@@ -113,8 +113,8 @@ class ProjectData:
             logger.warning("The provided dataframe is empty. No series overview will be created.")
             return None
         # Check if the dataframe contains study instance UID
-        if 'series_uid' not in df.columns:
-            logger.error("The dataframe does not contain 'StudyInstanceUID' column. Cannot initialize series overview.")
+        if 'SeriesInstanceUID' not in df.columns:
+            logger.error("The dataframe does not contain 'SeriesInstanceUID' column. Cannot initialize series overview.")
             return None
         
         # Get a list of all the columns in the input dataframe
@@ -157,8 +157,8 @@ class ProjectData:
         all_df_columns = df.columns.tolist()
 
         # Go through all the study instance UID's in the dataframe
-        for uid in df['series_uid'].unique():
-            study  = df[df['series_uid'] == uid]
+        for uid in df['SeriesInstanceUID'].unique():
+            study  = df[df['SeriesInstanceUID'] == uid]
             # Go through all potential columns in the dataframe and check whether they have exacly one unique value:
             for column in all_df_columns:
                 # Check if the column has exactly one unique value
@@ -182,7 +182,7 @@ class ProjectData:
         
         # If the series overview is empty, create it with the overview columns
         if len(self.series_overview) == 0:
-            self.series_overview = pd.DataFrame(columns=['series_index'] + self.overview_columns)
+            self.series_overview = pd.DataFrame(columns=['SeriesIndex'] + self.overview_columns)
         # If it exists, check all columns in the overview columns and add or remove them as needed
         else:
             for column in self.overview_columns:
@@ -232,20 +232,20 @@ class ProjectData:
             return
 
         # Check if the dataframe contains study instance UID
-        if 'series_uid' not in df.columns:
-            logger.error("The dataframe does not contain 'series_uid' column. Cannot add series.")
+        if 'SeriesInstanceUID' not in df.columns:
+            logger.error("The dataframe does not contain 'SeriesInstanceUID' column. Cannot add series.")
             return
         
         self._check_columns(df) # Check all the columns in the dataframe and add the relevant data to the overview.
 
         # Create a CTSeries object for each unique Series Instance UID in the dataframe
-        for series_uid in df['series_uid'].unique():
+        for series_uid in df['SeriesInstanceUID'].unique():
             # If the series already exists, skip it
             if series_uid in self.series_overview:
                 logger.warning(f"Series {series_uid} already exists in the project. Skipping.")
                 continue
             
-            series_df = df[df['series_uid'] == series_uid]
+            series_df = df[df['SeriesInstanceUID'] == series_uid]
 
             # Create a ct_series object and store it in the series_overview list.
             new_series = CTSeries(series_df)
@@ -253,10 +253,10 @@ class ProjectData:
             # Get the index of the series from the list of series
             series_index = len(self.list_of_series) -1
             # Add the series index to the series overview dataframe
-            new_row = {'series_index': series_index}
+            new_row = {'SeriesIndex': series_index}
             # Add all the other columns to the new row
             for column in self.series_overview.columns:
-                if column in 'series_index':
+                if column in 'SeriesIndex':
                     continue # Already added the series index
                 if column in series_df.columns:
                     new_row[column] = series_df[column].iloc[0]

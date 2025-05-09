@@ -298,34 +298,42 @@ def _convert_datatypes(df) -> pd.DataFrame:
 
     # Numerical columns that should be converted to float
     float_columns = [
-        'slice_location',  'slice_thickness', 'data_collection_diameter', 'reconstruction_diameter', 
-        'gantry_tilt', 'table_height', 'distance_source_to_detector', 'distance_source_to_patient',
-        'focal_spot', 'exposure_time', 'exposure', 'pixel_spacing', 'detector_element_size', 'total_collimation_width', 
-        'table_speed', 'table_feed_per_rotation', 'spiral_pitch_factor', 'tube_current', 'ctdi_vol']
+        'SliceLocation', 'SliceThickness', 'DataCollectionDiameter', 'ReconstructionDiameter',
+        'GantryDetectorTilt', 'TableHeight', 'DistanceSourceToDetector', 'DistanceSourceToPatient',
+        'FocalSpots', 'ExposureTime', 'Exposure', 'PixelSpacing', 'TotalCollimationWidth',
+        'TableSpeed', 'TableFeedPerRotation', 'SpiralPitchFactor', 'XRayTubeCurrent', 'CTDIvol',
+        'SingleCollimationWidth'
+    ]
     
-    
-    int_columns = ['instance_number', 'kvp','generator_power']
+    # Integer columns that should be converted to Int64
+    int_columns = ['InstanceNumber', 'KVP', 'GeneratorPower']
 
     # Date columns that should be converted to datetime
     date_columns = [
-        'study_date', 'series_date', 'acquition_date', 'content_date',
-        'last_calibration_date']
+        'StudyDate', 'SeriesDate', 'AcquisitionDate', 'ContentDate',
+        'DateOfLastCalibration'
+    ]
     
-    # Time columns
+    # Time columns that should be converted to time objects
     time_columns = [
-        'study_time', 'series_time', 'acquisition_time', 'content_time',
-        'last_calibration_time']
-    
-    ignored_columns = ['filepath', 'directory', 'filename', 
-                       'study_uid','series_uid', 'sop_uid', 
-                       'modality', 'station_name', 'manufacturer', 'model', 
-                       'device_serial_number', 'software_version', 
-                       'study_description', 'series_description', 
-                       'body_part', 'protocol_name', 
-                       'rotation_direction', 'filter_type', 'convolution_kernel', 
-                       'dose_modulation_type', 'image_type', 
-                       'ADMIRE_level', 
-                       'study_datetime']
+        'StudyTime', 'SeriesTime', 'AcquisitionTime', 'ContentTime',
+        'TimeOfLastCalibration'
+    ]
+      
+    # Columns that are already in their correct format or handled differently
+    ignored_columns = [
+        'Filepath',  # Added by scan_for_axial_ct_dicom_files
+        'StudyInstanceUID', 'SeriesInstanceUID', 'SOPInstanceUID', 
+        'Modality', 'StationName', 'Manufacturer', 'ManufacturerModelName', 
+        'DeviceSerialNumber', 'SoftwareVersions', 
+        'StudyDescription', 'SeriesDescription', 
+        'BodyPartExamined', 'ProtocolName', 
+        'RotationDirection', 'FilterType', 'ConvolutionKernel', 
+        'ExposureModulationType', 'image_type', # image_type is a tuple of strings
+        'ADMIRELevel', # Assuming this is string or handled if numeric
+        'DLIRLevel',   # Assuming this is string or handled if numeric
+        'StudyDateTime' # Created by this function
+    ]
     
     # Convert float columns
     for col in float_columns:
@@ -358,10 +366,10 @@ def _convert_datatypes(df) -> pd.DataFrame:
             )
     
     # Convert combined date and time columns
-    if 'study_date' in df.columns and 'study_time' in df.columns:
-        df['study_datetime'] = pd.to_datetime(
-            df['study_date'].dt.strftime('%Y-%m-%d') + ' ' + 
-            df['study_time'].apply(lambda x: str(x) if pd.notna(x) else ''),
+    if 'StudyDate' in df.columns and 'StudyTime' in df.columns:
+        df['StudyDateTime'] = pd.to_datetime(
+            df['StudyDate'].dt.strftime('%Y-%m-%d') + ' ' + 
+            df['StudyTime'].apply(lambda x: str(x) if pd.notna(x) else ''),
             errors='coerce'
         )
     
@@ -404,68 +412,68 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
     """
     # Define tag mappings (output_key: (dicom_tag, position))
     tag_mappings = {
-        # Common identifiers
-        'study_uid': ('StudyInstanceUID', None),
-        'series_uid': ('SeriesInstanceUID', None),
-        'sop_uid': ('SOPInstanceUID', None),
-        'modality': ('Modality', None),
-        'station_name': ('StationName', None),
-        'manufacturer': ('Manufacturer', None),
-        'model': ('ManufacturerModelName', None),
-        'device_serial_number': ('DeviceSerialNumber', None),
-        'software_version': ('SoftwareVersions', None),
-        'last_calibration_date': ('DateOfLastCalibration', None),
-        'last_calibration_time': ('TimeOfLastCalibration', None),
-
-        # Timing information
-        'study_date': ('StudyDate', None),
-        'study_time': ('StudyTime', None),
-        'series_date': ('SeriesDate', None),
-        'series_time': ('SeriesTime', None),
-        'acquition_date': ('AcquisitionDate', None),
-        'acquisition_time': ('AcquisitionTime', None),
-        'content_date': ('ContentDate', None),
-        'content_time': ('ContentTime', None),
-
-        # Information relevant to the series
-        'study_description': ('StudyDescription', None),
-        'series_description': ('SeriesDescription', None),
-        'body_part': ('BodyPartExamined', None),
-        'protocol_name': ('ProtocolName', None),
-
-        # Geometric information
-        'distance_source_to_detector': ('DistanceSourceToDetector', None),
-        'distance_source_to_patient': ('DistanceSourceToPatient', None),
-        'gantry_tilt': ('GantryDetectorTilt', None),
-        'table_height': ('TableHeight', None),
-        'rotation_direction': ('RotationDirection', None),
+        # Positional information
+        'InstanceNumber': ('InstanceNumber', None),
+        'SliceLocation': ('SliceLocation', None),
+        
+        # Technical parameters relevant for the image
+        'XRayTubeCurrent': ('XRayTubeCurrent', None),
+        'Exposure': ('Exposure', None),
+        'CTDIvol': ('CTDIvol', None),
 
         # Technical parameters relevant for the series
-        'kvp': ('KVP', None),
-        'filter_type': ('FilterType', None),
-        'slice_thickness': ('SliceThickness', None),
-        'data_collection_diameter': ('DataCollectionDiameter', None),
-        'reconstruction_diameter': ('ReconstructionDiameter', None),
-        'pixel_spacing': ('PixelSpacing', 0),
-        'generator_power': ('GeneratorPower', None),
-        'focal_spot': ('FocalSpots', 0),
-        'exposure_time': ('ExposureTime', None),
-        'convolution_kernel': ('ConvolutionKernel', 0),
-        'detector_element_size': ('SingleCollimationWidth', None),
-        'total_collimation_width': ('TotalCollimationWidth', None),
-        'table_speed': ('TableSpeed', None),
-        'table_feed_per_rotation': ('TableFeedPerRotation', None),
-        'spiral_pitch_factor': ('SpiralPitchFactor', None),
-        'dose_modulation_type': ('ExposureModulationType', None),
+        'KVP': ('KVP', None),
+        'FilterType': ('FilterType', None),
+        'SliceThickness': ('SliceThickness', None),
+        'DataCollectionDiameter': ('DataCollectionDiameter', None),
+        'ReconstructionDiameter': ('ReconstructionDiameter', None),
+        'PixelSpacing': ('PixelSpacing', 0),
+        'GeneratorPower': ('GeneratorPower', None),
+        'FocalSpots': ('FocalSpots', 0),
+        'ExposureTime': ('ExposureTime', None),
+        'ConvolutionKernel': ('ConvolutionKernel', 0),
+        'SingleCollimationWidth': ('SingleCollimationWidth', None),
+        'TotalCollimationWidth': ('TotalCollimationWidth', None),
+        'TableSpeed': ('TableSpeed', None),
+        'TableFeedPerRotation': ('TableFeedPerRotation', None),
+        'SpiralPitchFactor': ('SpiralPitchFactor', None),
+        'ExposureModulationType': ('ExposureModulationType', None),
 
-        # Technical parameters relevant for the image
-        'tube_current': ('XRayTubeCurrent', None),
-        'exposure': ('Exposure', None),
-        'ctdi_vol': ('CTDIvol', None),
-        
-        # Positional information
-        'instance_number': ('InstanceNumber', None),
-        'SliceLocation': ('SliceLocation', None),
+        # Common identifiers
+        'StudyInstanceUID': ('StudyInstanceUID', None),
+        'SeriesInstanceUID': ('SeriesInstanceUID', None),
+        'SOPInstanceUID': ('SOPInstanceUID', None),
+        'Modality': ('Modality', None),
+        'StationName': ('StationName', None),
+        'Manufacturer': ('Manufacturer', None),
+        'ManufacturerModelName': ('ManufacturerModelName', None),
+        'DeviceSerialNumber': ('DeviceSerialNumber', None),
+        'SoftwareVersions': ('SoftwareVersions', None),
+        'DateOfLastCalibration': ('DateOfLastCalibration', None),
+        'TimeOfLastCalibration': ('TimeOfLastCalibration', None),
+
+        # Timing information
+        'StudyDate': ('StudyDate', None),
+        'StudyTime': ('StudyTime', None),
+        'SeriesDate': ('SeriesDate', None),
+        'SeriesTime': ('SeriesTime', None),
+        'AcquisitionDate': ('AcquisitionDate', None),
+        'AcquisitionTime': ('AcquisitionTime', None),
+        'ContentDate': ('ContentDate', None),
+        'ContentTime': ('ContentTime', None),
+
+        # Information relevant to the series
+        'StudyDescription': ('StudyDescription', None),
+        'SeriesDescription': ('SeriesDescription', None),
+        'BodyPartExamined': ('BodyPartExamined', None),
+        'ProtocolName': ('ProtocolName', None),
+
+        # Geometric information
+        'DistanceSourceToDetector': ('DistanceSourceToDetector', None),
+        'DistanceSourceToPatient': ('DistanceSourceToPatient', None),
+        'GantryDetectorTilt': ('GantryDetectorTilt', None),
+        'TableHeight': ('TableHeight', None),
+        'RotationDirection': ('RotationDirection', None),
     }
 
     # Extract all metadata using the mappings
@@ -489,10 +497,10 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
         
         # Vendor-specific tags based on manufacturer
         try:
-            if file_info.get('manufacturer') == 'SIEMENS':
-                file_info['ADMIRE_level'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', 1)
-            elif file_info.get('manufacturer') == 'GE MEDICAL SYSTEMS':
-                file_info['DLIR_level'] = _get_dicom_metadata_tag(ds, '0x00531042')
+            if file_info.get('Manufacturer') == 'SIEMENS':
+                file_info['ADMIRELevel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', 1)
+            elif file_info.get('Manufacturer') == 'GE MEDICAL SYSTEMS':
+                file_info['DLIRLevel'] = _get_dicom_metadata_tag(ds, '0x00531042')
         except Exception as e:
             logger.debug(f"Error extracting vendor-specific tags: {str(e)}")
     
@@ -538,9 +546,7 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
         for filename in filenames:
             file_path = os.path.join(dirpath, filename)
             ds = _read_metadata(file_path)
-            file_info = {'filepath': file_path}
-            file_info['directory'] = dirpath
-            file_info['filename'] = filename
+            file_info = {'Filepath': file_path}
 
             if ds is None:
                 continue
@@ -562,10 +568,9 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
 
     df = _convert_datatypes(df)
 
-    # Sort the Dataframe by series UID then by time then by z-axis
-    df.sort_values(by=['study_date', 'study_time', 'series_uid', 'SliceLocation'], inplace=True)
+    # Sort the Dataframe by date, time, series UID then by z-axis
+    df.sort_values(by=['StudyDate', 'StudyTime', 'SeriesInstanceUID', 'SliceLocation'], inplace=True)
     df.reset_index(drop=True, inplace=True)
-
     return df
 
 def read_data(root_dir: str) -> pd.DataFrame:
