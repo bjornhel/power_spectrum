@@ -573,6 +573,54 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
     df.reset_index(drop=True, inplace=True)
     return df
 
+def scan_for_localizer_dicom_files(root_dir: str) -> list:
+    """
+    # Preliminary version:
+    Recursively scan a directory for CT localizer DICOM files and extract their metadata.
+
+    This function traverses the given root directory and its subdirectories to find DICOM files
+    that are identified as CT localizer images. For each valid localizer file, it reads the DICOM
+    metadata (without loading pixel data) and applies filtering to ensure only localizer images
+    are included. The function returns a list of DICOM datasets corresponding to the found localizer files.
+
+    Parameters
+    ----------
+    root_dir : str
+        Path to the root directory to scan for DICOM files.
+
+    Returns
+    -------
+    list of pydicom.Dataset
+        A list containing the DICOM datasets for all valid CT localizer images found.
+        Returns an empty list if no valid localizer files are found.
+
+    Notes
+    -----
+    - Uses _read_metadata() to read DICOM files without loading pixel data.
+    - Uses _filter_ct_images() to identify and select CT localizer images.
+    - Only DICOM datasets passing the localizer filter are included in the result.
+    - The returned list contains raw pydicom.Dataset objects, not extracted metadata dictionaries.
+    """
+    # List to hold dictionaries of file metadata.
+    file_data = []
+    
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            ds = _read_metadata(file_path)
+
+            if ds is None:
+                continue
+                
+            include = _filter_ct_images(ds, file_path, axial=False, localizer=True)  
+            if not include:
+                continue
+
+            file_data.append(ds)
+        
+    logger.info(f"Found {len(file_data)} DICOM files with valid metadata") 
+    return file_data
+
 def read_data(root_dir: str) -> pd.DataFrame:
     """Read DICOM metadata from the specified directory.
     

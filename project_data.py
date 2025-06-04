@@ -117,7 +117,7 @@ class ProjectData:
             logger.error("The dataframe does not contain 'SeriesInstanceUID' column. Cannot initialize series overview.")
             return None
         
-        # Get a list of all the columns in the input dataframe
+        # Initially set the overview columns to all the columns in the dataframe, some will be removed later.
         self.overview_columns = df.columns.tolist()
         self.add_series(df) # Add all the series in the dataframe to the project.
     
@@ -152,6 +152,9 @@ class ProjectData:
         - Creates the series_overview dataframe if it doesn't exist
         - For columns with exactly one value per series, they are added to overview_columns
         - For columns with multiple values per series, they are added to series_only_columns
+        - If a column is moved from overview to series-only, it is removed from overview_columns
+          In this case it should not be nessecary to move data to the series only, 
+          as the relevant data should be alredy there.
         """
         # Get all the columns in the dataframe
         all_df_columns = df.columns.tolist()
