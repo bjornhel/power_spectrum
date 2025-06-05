@@ -306,7 +306,7 @@ def _convert_datatypes(df) -> pd.DataFrame:
     ]
     
     # Integer columns that should be converted to Int64
-    int_columns = ['InstanceNumber', 'KVP', 'GeneratorPower']
+    int_columns = ['InstanceNumber', 'KVP', 'GeneratorPower', 'MatrixSize']
 
     # Date columns that should be converted to datetime
     date_columns = [
@@ -330,8 +330,7 @@ def _convert_datatypes(df) -> pd.DataFrame:
         'BodyPartExamined', 'ProtocolName', 
         'RotationDirection', 'FilterType', 'ConvolutionKernel', 
         'ExposureModulationType', 'image_type', # image_type is a tuple of strings
-        'ADMIRELevel', # Assuming this is string or handled if numeric
-        'DLIRLevel',   # Assuming this is string or handled if numeric
+        'IterativeAILevel', # Assuming this is string or handled if numeric
         'StudyDateTime' # Created by this function
     ]
     
@@ -438,6 +437,7 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
         'TableFeedPerRotation': ('TableFeedPerRotation', None),
         'SpiralPitchFactor': ('SpiralPitchFactor', None),
         'ExposureModulationType': ('ExposureModulationType', None),
+        'MatrixSize': ('Rows', None), 
 
         # Common identifiers
         'StudyInstanceUID': ('StudyInstanceUID', None),
@@ -498,9 +498,9 @@ def _extract_axial_ct_metadata(ds: dcm.Dataset) -> dict:
         # Vendor-specific tags based on manufacturer
         try:
             if file_info.get('Manufacturer') == 'SIEMENS':
-                file_info['ADMIRELevel'] = _get_dicom_metadata_tag(ds, 'ConvolutionKernel', 1)
+                file_info['IterativeAILevel'] = 'ADMIRE_' + str(_get_dicom_metadata_tag(ds, 'ConvolutionKernel', 1))
             elif file_info.get('Manufacturer') == 'GE MEDICAL SYSTEMS':
-                file_info['DLIRLevel'] = _get_dicom_metadata_tag(ds, '0x00531042')
+                file_info['IterativeAILevel'] = 'DLIR_' + str(_get_dicom_metadata_tag(ds, '0x00531042'))
         except Exception as e:
             logger.debug(f"Error extracting vendor-specific tags: {str(e)}")
     
@@ -546,7 +546,7 @@ def scan_for_axial_ct_dicom_files(root_dir: str) -> pd.DataFrame:
         for filename in filenames:
             file_path = os.path.join(dirpath, filename)
             ds = _read_metadata(file_path)
-            file_info = {'Filepath': file_path}
+            file_info = {'FilePath': file_path}
 
             if ds is None:
                 continue

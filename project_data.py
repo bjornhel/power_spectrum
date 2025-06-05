@@ -248,13 +248,12 @@ class ProjectData:
                 logger.warning(f"Series {series_uid} already exists in the project. Skipping.")
                 continue
             
-            series_df = df[df['SeriesInstanceUID'] == series_uid]
-
+            series_df = df[df['SeriesInstanceUID'] == series_uid]   
+            series_index = len(self.list_of_series)         # Get the index of the series to be added.
             # Create a ct_series object and store it in the series_overview list.
-            new_series = CTSeries(series_df)
+            new_series = CTSeries(series_df, series_index) # Create a new CT series object.
             self.list_of_series.append(new_series)
-            # Get the index of the series from the list of series
-            series_index = len(self.list_of_series) -1
+            
             # Add the series index to the series overview dataframe
             new_row = {'SeriesIndex': series_index}
             # Add all the other columns to the new row
