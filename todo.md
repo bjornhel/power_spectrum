@@ -1,6 +1,7 @@
 # Project todo list
 
 ## Features
+
 - [ ] In the project overview add functionality to make a compund series of similar scans.
 - [ ] Make functionality to plot and scroll in images.
 - [ ] Make functionality to draw regions of interest in images.
