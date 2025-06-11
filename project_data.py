@@ -291,3 +291,90 @@ class ProjectData:
         """
         return self.series_overview
     
+    def _count_series_with_tags(self, row) -> int:
+        """Count series in the project overview matching specified tag values.
+
+        This method iterates through the `self.series_overview` DataFrame
+        and counts how many series (rows) have values that exactly match
+        the tag-value pairs provided in the input `row`.
+
+        Parameters
+        ----------
+        row : pd.Series
+            A pandas Series where the index represents tag names (column names
+            from `self.series_overview`) and the values represent the specific
+            values to match for those tags.
+
+        Returns
+        -------
+        int
+            The number of series in `self.series_overview` that match all
+            tag-value pairs specified in the input `row`.
+        """
+        # Filter the series overview DataFrame to find rows that match the tags in the row
+        filtered_overview = self.series_overview
+        for tag, value in row.items():
+            filtered_overview = filtered_overview[filtered_overview[tag] == value]
+        # Return the number of row in the filtered overview:
+        return len(filtered_overview)
+    
+    def n_unique_settings(self, list_of_tags: list[str] = None) -> int:
+        """Summarize series distribution by unique tag combinations or count all series.
+
+        If `list_of_tags` is provided, this method identifies unique combinations
+        of values for the specified tags within the project's series overview.
+        It then returns a DataFrame detailing these unique combinations and
+        the count of original series matching each combination.
+
+        If `list_of_tags` is None, it returns the total number of series
+        objects currently in the project.
+
+        Parameters
+        ----------
+        list_of_tags : list[str], optional
+            A list of column names (tags) from the series overview to use for
+            identifying unique series combinations. Defaults to None.
+
+        Returns
+        -------
+        pd.DataFrame or int
+            - If `list_of_tags` is provided: A pandas DataFrame where each row
+              represents a unique combination of values for the specified tags.
+              The columns of this DataFrame are the tags from `list_of_tags`
+              plus an additional 'Counts' column. The 'Counts' column indicates
+              how many series in the original `self.series_overview` match
+              that specific combination of tag values.
+            - If `list_of_tags` is None: An integer representing the total
+              number of CTSeries objects in the project (`len(self.list_of_series)`).
+
+        Raises
+        ------
+        ValueError
+            If any tag in `list_of_tags` is not found in
+            `self.overview_columns`.
+
+        Notes
+        -----
+        - The method logs informational messages, warnings, or errors related
+          to its execution.
+        - The type hint `-> int` for the method currently only accurately
+          reflects the return type when `list_of_tags` is None.
+        """
+        if list_of_tags is None:
+            logger.warning("No tags provided for filtering. Counting all unique series.")
+            return len(self.list_of_series)
+        
+        # Check if the tags are found in the project's overview columns.
+        for tag in list_of_tags:
+            if tag not in self.overview_columns:
+                logger.error(f"Tag '{tag}' not found in project overview columns. Cannot filter series.")
+                raise ValueError(f"Tag '{tag}' not found in project overview columns.")
+        
+        logger.info(f"Counting unique series with tags: {list_of_tags}")
+        # Create a DataFrame containing only the unique combinations of values for the specified tags,
+        # effectively summarizing the distinct groups of series based on those tags.
+        count_df = pd.DataFrame(self.series_overview[list_of_tags].drop_duplicates())
+        # Count the number of series that match the specified tags
+        count_df['Counts'] = count_df.apply(lambda row: self._count_series_with_tags(row), axis=1)
+        return count_df
+    
