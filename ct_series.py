@@ -405,7 +405,40 @@ class CTSeries():
         if delete_memory:
             self.del_pixel_data(delete_stored=False)
 
-    def load_stored_pixel_data(self, delete_stored=False):
+    def find_pixel_data(self, path='Data'):
+        self._check_consistency_pixeldata_stored()
+        
+        if self.has_pixel_data:
+            logger.info(f"Series No. {self.SeriesIndex} - Pixel data already loaded.")
+            return
+
+        if self.pixel_data_stored and self.pixel_data_path:
+            # If pixel data is stored, no need to find it again.
+            logger.info(f"Series No. {self.SeriesIndex} - Pixel data already stored at {self.pixel_data_path}.")
+            return
+        if path is None or path == '':
+            # If no path is provided and there is no stored path report an error and exit.
+            logger.error(f"Series No. {self.SeriesIndex} - No path provided to load from.")
+            return
+
+        # Check if the last folder in the path is pixel_data
+        if not os.path.basename(path).startswith('pixel_data'):
+            # If the path does not end with 'pixel_data', append it
+            path = os.path.join(path, 'pixel_data')
+        
+        # Check if the appropriate file exists in the path.
+        file_path = os.path.join(path, f"CT_series_{self.SeriesIndex}.npy")
+        if os.path.exists(file_path):
+            self.pixel_data_path = file_path
+            self.pixel_data_stored = True
+            logger.info(f"Series No. {self.SeriesIndex} - Pixel data path set to {self.pixel_data_path}.")
+            return
+        else:
+            # If the path does not exist, log an error and exit.
+            logger.error(f"Series No. {self.SeriesIndex} - Pixel data path {path} does not exist.")
+            return   
+
+    def load_stored_pixel_data(self, path=None, delete_stored=False):
         """Load pixel data from a stored file into memory.
 
         This method checks if pixel data is already loaded in memory.
@@ -438,11 +471,14 @@ class CTSeries():
         if self.has_pixel_data:
             logger.info(f"Series No. {self.SeriesIndex} - Pixel data already loaded.")
             return
-        
+
+        # Logic to read pixel data from a stored file if the path is not stored.
         if not self.pixel_data_stored or not self.pixel_data_path:
-            logger.error(f"Series No. {self.SeriesIndex} - Pixel data is not stored or path is invalid.")
-            return
-        
+            # Check if there is an appropriate named file to load from a previous session.
+            if path is not None:
+                self.find_pixel_data(path)
+                     
+        # Logic to read pixel data from stored file if the path is stored.
         try:
             self.pixel_data = np.load(self.pixel_data_path)
             self.has_pixel_data = True
