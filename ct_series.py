@@ -14,7 +14,73 @@ else:
 
 @dataclass
 class CTSeries():
-    """Represents a series of CT images with the same Series Instance UID."""
+    """Represents and manages a single series of CT images.
+
+    This class encapsulates all the metadata and pixel data associated with a
+    single CT scan series (i.e., images sharing the same Series Instance UID).
+    It provides an interface to manage the lifecycle of the pixel data,
+    including reading from original DICOM files, storing to and loading from
+    a more efficient format (.npy), and clearing data from memory to conserve
+    resources.
+
+    The class is initialized with a pandas DataFrame containing the metadata for
+    all slices in the series. It then populates its own attributes with key
+    series-level metadata for easy access.
+
+    Attributes
+    ----------
+    data : pd.DataFrame
+        A DataFrame containing the detailed metadata for each slice in the series.
+    SeriesIndex : int
+        A unique index identifying this series within a larger project context.
+    has_pixel_data : bool
+        A flag that is True if the pixel data is currently loaded into memory
+        in the `pixel_data` attribute.
+    pixel_data : np.ndarray or None
+        A 3D NumPy array holding the raw pixel data for all slices in the
+        series. It is `None` if the data is not loaded in memory.
+    pixel_data_stored : bool
+        A flag that is True if the pixel data has been saved to a file on disk.
+    pixel_data_path : str or None
+        The file path to the stored .npy file for the pixel data.
+    SeriesDescription : str
+        The textual description of the series from DICOM metadata.
+    z_location : list
+        A list of z-axis locations for each slice.
+    mA_curve : list
+        A list of mA values for each slice, if available.
+    ctdi_vol_curve : list
+        A list of CTDIvol values for each slice, if available.
+    KVP : int
+        The KVP value for the series.
+    ConvolutionKernel : str
+        The convolution kernel used for image reconstruction.
+    IterativeAILevel : str
+        The iterative reconstruction or AI level (e.g., 'ADMIRE_3', 'DLIR_H').
+    (and other series-level DICOM attributes)
+
+    Methods
+    -------
+    read_pixel_data()
+        Loads pixel data from the original DICOM files into memory.
+    del_pixel_data(delete_stored=False)
+        Clears pixel data from memory and optionally deletes the stored file.
+    store_pixel_data(path='Data', delete_memory=False, move=False)
+        Saves the in-memory pixel data to a .npy file on disk.
+    load_stored_pixel_data(delete_stored=False)
+        Loads pixel data from a previously stored .npy file into memory.
+    del_stored_pixel_data()
+        Deletes the stored .npy file from disk and updates the stored state and path.
+    find_pixel_data(path)
+        Searches for a pre-existing .npy file and registers its path.
+    
+    Anonymous Methods
+    -----------------
+    _check_consistency_pixeldata_memory()
+        Checks and corrects the consistency of in-memory pixel data state.
+    _check_consistency_pixeldata_stored()
+        Checks and corrects the consistency of stored pixel data state.
+    """
     data: pd.DataFrame
     SeriesIndex: int                    # Index of the series in the dataset
     
@@ -108,6 +174,7 @@ class CTSeries():
         if 'CTDIvol' in self.data.columns:
             self.ctdi_vol_curve = self.data['CTDIvol'].tolist()
 
+    # Anonymous Methods for checking consistency of pixel data state
     def _check_consistency_pixeldata_memory(self):
         """Verify and correct consistency of in-memory pixel data state.
 
@@ -357,8 +424,50 @@ class CTSeries():
         self.pixel_data_shape = np.shape(self.pixel_data)
         logger.info(f"Series No. {self.SeriesIndex} - Pixel data loaded successfully. Shape: {self.pixel_data_shape}")
 
+    # Methods for managing pixel data storage and retrieval
     def store_pixel_data(self, path='Data', delete_memory=False, move=False):
-        """Store pixel data to a file."""
+        """Saves the in-memory pixel data to a .npy file and updates state.
+
+        This method serializes the NumPy array from `self.pixel_data` and saves
+        it to a structured location on disk. It constructs a path using a
+        'pixel_data' subfolder within the provided base `path`, and a filename
+        based on the series index (e.g., 'Data/pixel_data/CT_series_0.npy').
+
+        If a file already exists at the target path, it will be overwritten,
+        and a warning will be logged.
+
+        After a successful save, the instance's state is updated to reflect that
+        the data is stored on disk. The `delete_memory` or `move` flags can be
+        used to immediately clear the pixel data from memory to conserve resources.
+
+        Parameters
+        ----------
+        path : str, optional
+            The base directory where the 'pixel_data' subfolder will be
+            created. Defaults to 'Data'.
+        delete_memory : bool, optional
+            If True, `self.del_pixel_data()` is called after a successful save
+            to remove the pixel data array from memory. Defaults to False.
+        move : bool, optional
+            If True, and if pixel data is already stored, it will attempt to
+            move the existing pixel data file to the new path instead of
+            saving a new file. If the existing file is already at the target
+            path, it will log that no action is needed. Defaults to False.
+
+        Side Effects
+        ------------
+        - Creates a directory (e.g., 'Data/pixel_data') if it does not exist.
+        - Writes or overwrites a .npy file on the filesystem.
+        - Sets `self.pixel_data_stored` to `True`.
+        - Updates `self.pixel_data_path` with the full path to the saved file.
+        - If `delete_memory` or `move` is True, `self.pixel_data` is set to `None`.
+        - Logs the outcome of the operation.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place and does not return a value.
+        """
         
         self._check_consistency_pixeldata_memory()
         self._check_consistency_pixeldata_stored()
@@ -406,6 +515,33 @@ class CTSeries():
             self.del_pixel_data(delete_stored=False)
 
     def find_pixel_data(self, path='Data'):
+        """Search for and register a pre-existing pixel data file for the series.
+
+        This method attempts to locate a previously stored pixel data file (.npy)
+        for the current CT series within a given directory. It constructs the
+        expected filename using the series index (e.g., 'CT_series_0.npy') and
+        checks for its existence at the specified path.
+
+        If the file is found, it updates the instance's `pixel_data_path` and
+        `pixel_data_stored` attributes to reflect that the data is available on
+        disk, making it ready for loading.
+
+        Parameters
+        ----------
+        path : str
+            The directory path in which to search for the pixel data file.
+
+        Side Effects
+        ------------
+        - Updates `self.pixel_data_path` to the full path of the found file.
+        - Sets `self.pixel_data_stored` to `True` if the file is found.
+        - Logs informational or warning messages about the search outcome.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place and does not return a value.
+        """       
         self._check_consistency_pixeldata_stored()
         
         if self.has_pixel_data:
@@ -491,6 +627,7 @@ class CTSeries():
             self.del_stored_pixel_data(delete_memory=False)
             logger.info(f"Series No. {self.SeriesIndex} - Stored pixel data deleted after loading into memory.")
     
+    # Methods for deleting pixel data from memory and disk
     def del_pixel_data(self, delete_stored=False):
         """Delete in-memory pixel data and optionally its stored file.
 
