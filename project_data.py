@@ -13,6 +13,7 @@ Dependencies:
     ct_series: For individual series handling
 """
 
+from typing import Union
 import pandas as pd
 from ct_series import CTSeries
 
@@ -378,3 +379,57 @@ class ProjectData:
         count_df['Counts'] = count_df.apply(lambda row: self._count_series_with_tags(row), axis=1)
         return count_df
     
+    def select_similar_series(self, tag_values: dict[str, Union[str, int, float]]) -> list[CTSeries]:
+        """Selects series from the project that match a set of criteria.
+
+        This method filters the `series_overview` DataFrame to find all series
+        that have metadata values exactly matching the key-value pairs provided
+        in the `tag_values` dictionary. It then returns a list of the `CTSeries`
+        objects corresponding to the matching series.
+
+        Parameters
+        ----------
+        tag_values : dict[str, Union[str, int, float, date]]
+            A dictionary where keys are the column names (DICOM tags) in the
+            `series_overview` DataFrame, and values are the desired values to
+            match for those tags.
+
+        Returns
+        -------
+        list[CTSeries]
+            A list of `CTSeries` objects that match all the specified criteria.
+            Returns an empty list if no series match.
+        Examples
+        --------
+        >>> # Find all series with a 512x512 matrix and a specific description
+        >>> criteria = {
+        ...     'MatrixSize': 512,
+        ...     'SeriesDescription': '[ClariCT.AI] Claripi 1.0  Hr40  3'
+        ... }
+        >>> matching_series_list = project.select_similar_series(criteria)            
+        """
+        if not tag_values:
+            logger.warning("No tag values provided for filtering. Returning None.")
+            return None
+        
+        # Check if all tags are in the overview columns
+        for tag in tag_values.keys():
+            if tag not in self.overview_columns:
+                logger.error(f"Tag '{tag}' not found in project overview columns. Cannot filter series.")
+                raise ValueError(f"Tag '{tag}' not found in project overview columns.")
+        
+        logger.info(f"Selecting series with tags: {tag_values}")
+        # Filter the series overview DataFrame to find rows that match the tags in tag_values
+        selected_series = self.series_overview
+        for tag, value in tag_values.items():
+            selected_series = selected_series[selected_series[tag] == value]
+        # Get the indices of the matching series
+        selected_index = selected_series['SeriesIndex'].tolist()
+        # Return the list of CTSeries objects that match the specified tag values
+        selected_series_list = [s for s in self.list_of_series if s.SeriesIndex in selected_index]
+        if not selected_series_list:
+            logger.warning("No series found matching the specified tag values.")
+            return []
+        logger.info(f"Found {len(selected_series_list)} series matching the specified tag values.")
+        return selected_series_list
+

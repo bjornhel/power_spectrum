@@ -51,19 +51,17 @@ class CTSuperSeries(z_tolerance=0):
                              'DataCollectionDiameter', 'FocalSpots', 'BodyPartExamined',
                              'ProtocolName', 'StationName', 'Manufacturer',
                              'ManufacturerModelName', 'SoftwareVersions']
-        self._verify_z_location(list_of_tags)    
+        self._verify_attribute_consistency(list_of_tags)    
 
-    def _verify_attribute_consistency(self, attribute_name: str):
+    def _verify_attribute_consistency(self, attribute_name: list[str]):
         """
         Verify that all CT series in the list have the same value for a given attribute.
 
         Parameters
         ----------
-        attribute_name : str
+        attribute_name : list[str]
             The name of the attribute to check on each CTSeries object (e.g., "kvp").
-        display_name : str, optional
-            A user-friendly name for the attribute to use in messages.
-            If None, `attribute_name` is used.
+
 
         Raises
         ------
@@ -85,26 +83,36 @@ class CTSuperSeries(z_tolerance=0):
             )
         
         single_value = next(iter(value_set)) if value_set else "N/A"
-        logger.debug(f"All CT series have the same {display_name}: {single_value}")
+        logger.debug(f"All CT series have the same: {single_value}")
     
-    def _verify_kvp(self):
-        """
-        Go through the list of CT series and check if they have the same kvp.
-        If not, raise a ValueError.
-        """
-        kvp_set = set(series.kvp for series in self.list_of_series)
-        if len(kvp_set) > 1:
-            raise ValueError(f"CT series have different kvp values: {kvp_set}")
-        logger.debug(f"All CT series have the same kvp: {kvp_set.pop()}")
-
-
     def _verify_z_location(self, z_tolerance = 0):
         """
-        Go through the list of CT series and check if they have the same z-location 
-        (or z-coordinate within the z-tolerance).
-        The z-location does not have to have the same start and end (e.g. if one scan length is 
-        shorter or longer than the other). But the z-locations should be matched as cloasely as possible.
+        Verify that all CT series in the list have the same z_location within a specified tolerance.
+
+        Parameters
+        ----------
+        z_tolerance : float, optional
+            The tolerance for z_location comparison (default is 0).
+
+        Raises
+        ------
+        ValueError
+            If the z_locations are not consistent within the specified tolerance.
         """
+        if self.z_location is None:
+            logger.warning("No z_location provided for CT series.")
+            return
+        
+        if len(self.z_location) < 2:
+            logger.debug("Not enough z_locations to verify consistency.")
+            return
+        
+        first_z = self.z_location[0]
+        for z in self.z_location[1:]:
+            if abs(first_z - z) > z_tolerance:
+                raise ValueError(f"Z locations are not consistent within tolerance {z_tolerance}: {self.z_location}")
+        
+        logger.debug(f"All z locations are consistent within tolerance {z_tolerance}.")
         
     
 
