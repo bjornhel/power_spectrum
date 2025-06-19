@@ -21,7 +21,9 @@ class CTSuperSeries():
     list_of_series: list
     z_tolerance: float = 0.0            # Tolerance for SliceLocations consistency check
     accept_difference_positioning: bool = False  # Whether to accept different scan positioning and/or length
-    SliceLocations: list = None
+    SliceLocations: list = None         # List of z-locations for the slices in the super series
+    total_mA_curve: list = None         # Total mA curve for the series, if applicable
+    total_ctdi_vol_curve: list = None       # Total CTDI curve for the series, if applicable
     KVP: int = None                     # KVP value for the series
     ConvolutionKernel: str = None       # Convolution kernel used
     IterativeAILevel: str = None        # Iterative AI level, if applicable
@@ -42,9 +44,8 @@ class CTSuperSeries():
     ManufacturerModelName: str = None   # Model name of the CT scanner
     SoftwareVersions: str = None        # Software version of the CT scanner
     crop_borders: list = None           # List of slices to include in the super series, represents the indexes of the slices to include in the list of series.
-    pixel_data: np.ndarray = None       # Pixel data of the CT series, if applicable
-
-
+    pixel_data_individual: np.ndarray = None       # Pixel data of all the CT series to be included in the super series. 4D array with shape (height, width, n_slices, n_series)
+    pixel_data_super_series: np.ndarray = None     # Pixel data of the super series, if applicable. 3D array with shape (height, width, n_slices)
 
     def __post_init__(self):
         """
@@ -67,7 +68,9 @@ class CTSuperSeries():
                              'ProtocolName', 'StationName', 'Manufacturer',
                              'ManufacturerModelName', 'SoftwareVersions']
         self._verify_attribute_consistency(list_of_tags)  
-        self._align_and_check_slicelocations()  
+        self._align_and_check_slicelocations()
+        self._generate_total_mA_curve()
+        self._generate_total_ctdi_vol_curve()
 
     def _verify_attribute_consistency(self, attribute_name: list[str]):
         """
@@ -206,22 +209,22 @@ class CTSuperSeries():
 
             if increment is not None:
                 # Calculate the number of slices the series is offset from the reference series.
-                # For instance if index_shift is -2, it means the first slice of the current series is 2 slices after the first slice of the refernce series.
-                # So the current slice must be shifted by -2 indices to align with the reference series.
-                index_shift = int(np.round(z_offset / increment)) * -1  # Multiply by -1 to get the correct direction of the shift.
+                # If the index_shift is positive the first slice of the current series is closest to [index_shift] of the reference series.
+                # If the index_shift is negative, the first slice of the reference series is closest to the [abs(index_shift)] of the current series.
+                index_shift = int(np.round(z_offset / increment))
             else:
                 # If no increment, we cannot determine how to shift.
                 index_shift = 0
             
             # --- 4. Test of there is sufficient overlap with the reference series ---
             overlap_error = False
-            # If the index shift is to the left (negative), we need to check if the reference series has enough slices to accommodate the shift.
-            if index_shift <= 0:
-                if len(reference_z_loc) <= abs(index_shift):
+            # If the index shift is positive, we need to check if the reference series has enough slices to accommodate the shift.
+            if index_shift >= 0:
+                if len(reference_z_loc) < index_shift:
                     overlap_error = True
-            # If the index shift is to the right (positive), we need to check if the current series has enough slices to accommodate the shift.
+            # If the index shift is negative, we need to check if the current series has enough slices to accommodate the shift.
             else:
-                if len(series.SliceLocations) <= abs(index_shift):
+                if len(series.SliceLocations) < abs(index_shift):
                     overlap_error = True
             
             if overlap_error:
@@ -229,14 +232,14 @@ class CTSuperSeries():
                                  f"Index shift {index_shift} exceeds the number of slices in the reference series.")
 
             # --- 5. Extract the first similar location ---
-            # If the index shift is negative, we need to compare the first slice of the current series with a shifted slice in the reference series.
-            if index_shift <= 0:
-                first_similar_location_ref = reference_z_loc[abs(index_shift)]
+            # If the index shift is positive, we need to compare the first slice of the current series with the [index_shift] slice in the reference series.
+            if index_shift >= 0:
+                first_similar_location_ref = reference_z_loc[index_shift]
                 first_similar_location_series = series.SliceLocations[0]    
-            # If the index shift is positive, we need to compare the first slice of the reference series with a shifted slice in the current series.
+            # If the index shift is negative, we need to compare the first slice of the reference series with the [index_shift] slice in the current series.
             else:
                 first_similar_location_ref = reference_z_loc[0]
-                first_similar_location_series = series.SliceLocations[index_shift]
+                first_similar_location_series = series.SliceLocations[abs(index_shift)]
             
             # --- 6. Check if the first similar location is within tolerance ---
             EPSILON = 1e-6  # Small value to avoid floating point precision issues.
@@ -244,14 +247,14 @@ class CTSuperSeries():
                     raise ValueError(f"Series {series.SeriesIndex} has a z-location is out of tolerance with reference Series {self.list_of_series[0].SeriesIndex}. "
                                      f"First similar location {first_similar_location_series} is not within tolerance of {self.z_tolerance} mm from {first_similar_location_ref}.") 
 
-            # Store the coordinate of the first slice in terms of the reference series.
+            # Store the index of the first slice in terms of the reference series.
             left_ind.append(index_shift)  # Append the index shift for the current series.
             # Store the coordinate of the last slice in terms of the reference series.
             right_ind.append(len(series.SliceLocations)+index_shift-1)
 
         # Find the common overlapping region across all series.
-        # The common region on the left side is defined by the maximum of the left indices.
-        common_left = max(left_ind)
+        # The common region on the left side, the maximum shifted left index.
+        common_left = max(left_ind) 
         # The common region on the right side is defined by the minimum of the right indices.
         common_right = min(right_ind)
         # If the common left index is greater than the common right index, it means there is no overlap.
@@ -265,8 +268,97 @@ class CTSuperSeries():
         self.crop_borders = [[common_left, common_right]]  # Initialize with the common region for the reference series,
         for i, series in enumerate(self.list_of_series[1:], start=1):
             # Calculate the start and end indices for the current series based on the common overlapping region.
-            start_index = common_left + left_ind[i]
-            end_index = common_right + left_ind[i]
+            start_index = common_left - left_ind[i]
+            end_index = common_right - left_ind[i]
             self.crop_borders.append([start_index, end_index])
         
         logger.debug(f"Aligned and checked SliceLocations with common region from {common_left} to {common_right}.")
+    
+    def _generate_total_mA_curve(self):
+        """
+        Generate the total mA curve for the super series based on the individual series.
+        The total mA curve is a list of the total mA for each slice in the super series.
+        """
+        
+        # Go through each series in the list and add the mA values to the total mA curve:
+        # Initialize the total mA curve with zeros, with the same length as the number of slices in the super series.
+        self.total_mA_curve = [0] * len(self.SliceLocations)
+
+        for i, series in enumerate(self.list_of_series):
+            # Get the cropped mA curve for the current series.
+            mA_curve = series.mA_curve[self.crop_borders[i][0]:self.crop_borders[i][1] + 1]
+            # Add the mA values to the total mA curve for the slices in the super series.
+            self.total_mA_curve = [x + y for x, y in zip(self.total_mA_curve, mA_curve)]
+            
+    def _generate_total_ctdi_vol_curve(self):
+        """
+        Generate the total CTDI volume curve for the super series based on the individual series.
+        The total CTDI volume curve is a list of the total CTDI volume for each slice in the super series.
+        """
+        
+        # Go through each series in the list and add the CTDI volume values to the total CTDI volume curve:
+        # Initialize the total CTDI volume curve with zeros, with the same length as the number of slices in the super series.
+        self.total_ctdi_vol_curve = [0] * len(self.SliceLocations)
+
+        for i, series in enumerate(self.list_of_series):
+            # Get the cropped CTDI volume curve for the current series.
+            ctdi_vol_curve = series.ctdi_vol_curve[self.crop_borders[i][0]:self.crop_borders[i][1] + 1]
+            # Add the CTDI volume values to the total CTDI volume curve for the slices in the super series.
+            self.total_ctdi_vol_curve = [x + y for x, y in zip(self.total_ctdi_vol_curve, ctdi_vol_curve)]
+    
+    def generate_pixel_data_individual(self, path='Data'):
+        """
+        Generate the pixel data for each series in the super series.
+        The pixel data is a 4D array with shape (height, width, n_slices, n_series).
+        """
+
+        # Make sure all the series have pixel data available
+        for series in self.list_of_series:
+            # If the series does not have pixel data, try to find it.
+            if not (series.has_pixel_data or series.pixel_data_stored):
+                series.find_pixel_data(path=path)
+            if series.pixel_data_stored and not series.has_pixel_data:
+                series.load_stored_pixel_data(path=path)
+            # If the pixel data is still not available, log a warning.
+            if not series.has_pixel_data:
+                series.read_pixel_data()
+            if not series.has_pixel_data:
+                logger.warning(f"Pixel data for series {series.SeriesIndex} is still not available.")                
+                return
+
+        first_series = self.list_of_series[0]
+        height, width = first_series.pixel_data.shape[:2]
+        
+        # Initialize the pixel data array with zeros.
+        self.pixel_data_individual = np.zeros((height, width, len(self.SliceLocations), len(self.list_of_series)), dtype=first_series.pixel_data.dtype)
+
+        for i, series in enumerate(self.list_of_series):
+            # Get the cropped pixel data for the current series.
+            cropped_pixel_data = series.pixel_data[:, :, self.crop_borders[i][0]:self.crop_borders[i][1] + 1]
+            # Add the pixel data to the individual pixel data array.
+            self.pixel_data_individual[:, :, :, i] = cropped_pixel_data
+        logger.debug("Pixel data for individual series generated successfully.")
+    
+    def generate_mean_image(self, path='Data'):
+        """
+        Generate the pixel data for the super series.
+        The pixel data is a 3D array with shape (height, width, n_slices).
+        """
+        if self.pixel_data_individual is None:
+            logger.error("Pixel data for individual series has not been generated. Calling generate_pixel_data_individual() first.")
+            self.generate_pixel_data_individual(path=path)
+        # Average the pixel data across the series dimension (axis 3).
+        self.pixel_data_super_series = np.mean(self.pixel_data_individual, axis=3)
+        logger.debug("Pixel data for super series generated successfully.")
+
+    def generate_std_image(self, path='Data'):
+        """
+        Generate the standard deviation image for the super series.
+        The pixel data is a 3D array with shape (height, width, n_slices).
+        """
+        if self.pixel_data_individual is None:
+            logger.error("Pixel data for individual series has not been generated. Calling generate_pixel_data_individual() first.")
+            self.generate_pixel_data_individual(path=path)
+        # Calculate the standard deviation across the series dimension (axis 3).
+        self.pixel_data_std_series = np.std(self.pixel_data_individual, axis=3)
+        logger.debug("Standard deviation image for super series generated successfully.")
