@@ -45,7 +45,7 @@ class CTSeries():
         The file path to the stored .npy file for the pixel data.
     SeriesDescription : str
         The textual description of the series from DICOM metadata.
-    z_location : list
+    SliceLocations : list
         A list of z-axis locations for each slice.
     mA_curve : list
         A list of mA values for each slice, if available.
@@ -89,7 +89,7 @@ class CTSeries():
     pixel_data_shape: tuple = None      
     pixel_data_stored: bool = False     # Flag to indicate if pixel data is stored in a pkl.
     pixel_data_path: str = None         # Path to the pixel data file if stored
-    z_location: list = None             # A list of z locations for each slice
+    SliceLocations: list = None         # A list of z locations for each slice
     mA_curve: list = None               # A list of mA values for each slice
     ctdi_vol_curve: list = None         # A list of CTDIvol values for each slice
     KVP: int = None                     # KVP value for the series
@@ -160,14 +160,14 @@ class CTSeries():
         self.ContentTime =              self.data['ContentTime'].iat[0] if 'ContentTime' in self.data.columns else None
 
 
-        # Fill in the z_location
+        # Fill in the SliceLocations
         if 'SliceLocation' in self.data.columns:
             # Check if the data is sorted by SliceLocation
             if not self.data['SliceLocation'].is_monotonic_increasing:
                 logger.warning("SliceLocation is not sorted. Sorting it now.")
                 self.data = self.data.sort_values(by='SliceLocation')
-            # Fill in the z_location
-            self.z_location = self.data['SliceLocation'].tolist()
+            # Fill in the SliceLocations
+            self.SliceLocations = self.data['SliceLocation'].tolist()
         if 'XRayTubeCurrent' in self.data.columns: 
             self.mA_curve = self.data['XRayTubeCurrent'].tolist()
         # Get the CTDIvol curve if it exists
