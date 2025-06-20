@@ -122,10 +122,10 @@ class CTSuperSeries():
             is set to `False`, it performs a strict check that all series have identical
             `SliceLocations`. If set to `True`, it allows for flexible alignment, where a common
             overlapping region is determined. The remaining must be aligned within a specified
-            tolerance (`z_tolerance`). If the alignment fails, it raises a `ValueError`. Populates
-            the crop_borders attribute with the start and end indices of the common overlapping 
-            region for each series to facilitate cropping of the pixel data, mA curve, and CTDI 
-            olume curve.
+            tolerance (`z_tolerance`). If the alignment fails, it raises a `ValueError`. 
+            Populates the crop_borders attribute with the start and end indices of the common 
+            overlapping region for each series. This facilitates cropping of the pixel data, mA curve, 
+            and CTDI volume curve.
         4. **Generates Total mA Curve:** Calls `_generate_total_mA_curve` to compute the
             cumulative mA curve across all series. This method sums the `mA_curve` attributes
             of each `CTSeries` object, ensuring that the resulting curve corresponds to the ovelapping
