@@ -13,14 +13,64 @@ else:
 
 @dataclass
 class CTSuperSeries():
-    """
-    A class to hold series of CT scans with similar characteristics in order
-    to make superimages.
-    The input is a list of CT series.
+    """Manages a collection of similar CT series as a single, coherent entity.
+
+    This class groups multiple `CTSeries` objects that are intended to be
+    comparable (e.g., repeated scans of the same phantom or patient). Upon
+    initialization, it performs a series of validation and alignment steps to
+    ensure the series are geometrically and parametrically consistent.
+
+    The primary purpose is to facilitate aggregate analysis across these scans,
+    such as calculating mean and standard deviation images, or summing dose-
+    related curves. The class handles complex geometric alignment, allowing for
+    scans with minor differences in starting position or length to be processed
+    together.
+
+    Attributes
+    ----------
+    list_of_series : list[CTSeries]
+        The list of individual `CTSeries` objects that make up this super-series.
+    accept_difference_positioning : bool, optional
+        If True, enables flexible alignment to handle series with different
+        starting positions or lengths. If False (default), requires all series
+        to have identical z-locations.
+    z_tolerance : float, optional
+        In flexible alignment mode, the maximum allowed deviation (in mm)
+        between a slice's z-location and the reference position. Defaults to 0.
+        Only used if `accept_difference_positioning` is True.
+    SliceLocations : list[float]
+        The final, common z-axis coordinates for all slices after alignment and
+        cropping. This defines the coordinate system for all aggregate data.
+    total_mA_curve : list[float]
+        The element-wise sum of the `mA_curve` from all contained series.
+    total_ctdi_vol_curve : list[float]
+        The element-wise sum of the `ctdi_vol_curve` from all contained series.
+    KVP, ConvolutionKernel, etc.
+        Key imaging parameters that have been verified to be consistent across
+        all series are copied as attributes to the super-series instance.                
+    pixel_data_individual : np.ndarray | None
+        A 4D NumPy array of shape (height, width, n_slices, n_series) containing
+        the stacked pixel data from all aligned series. Populated by calling
+        `generate_pixel_data_individual()`.
+    pixel_data_super_series : np.ndarray | None
+        A 3D NumPy array representing the mean image, calculated pixel-wise
+        across all series. Populated by calling `generate_mean_image()`.
+    pixel_data_std_series : np.ndarray | None
+        A 3D NumPy array representing the standard deviation image. Populated
+        by calling `generate_std_image()`.
+
+    Methods
+    -------
+    generate_pixel_data_individual()
+        Loads and stacks the pixel data from all contained series.
+    generate_mean_image()
+        Calculates the mean image from the stacked individual pixel data.
+    generate_std_image()
+        Calculates the standard deviation image from the stacked data.
     """
     list_of_series: list
-    z_tolerance: float = 0.0            # Tolerance for SliceLocations consistency check
     accept_difference_positioning: bool = False  # Whether to accept different scan positioning and/or length
+    z_tolerance: float = 0.0            # Tolerance for SliceLocations consistency check
     SliceLocations: list = None         # List of z-locations for the slices in the super series
     total_mA_curve: list = None         # Total mA curve for the series, if applicable
     total_ctdi_vol_curve: list = None       # Total CTDI curve for the series, if applicable
@@ -48,8 +98,63 @@ class CTSuperSeries():
     pixel_data_super_series: np.ndarray = None     # Pixel data of the super series, if applicable. 3D array with shape (height, width, n_slices)
 
     def __post_init__(self):
-        """
-        Post-initialization to check if CTSeries is a list.
+        """Performs post-initialization validation and setup for the super-series.
+
+        This special method is automatically called by the `@dataclass` decorator
+        immediately after the instance has been created. Its primary role is to
+        transform the raw list of `CTSeries` objects into a coherent, validated,
+        and fully processed super-series.
+
+        It executes a sequence of critical setup steps:
+        1.  **Checks input:** Validates that `list_of_series` is a list and contains
+            at least two `CTSeries` objects. If not, it raises a `ValueError`.
+            If the input is not a list, it raises a `TypeError`.
+            If the list contains less than two series, it raises a `ValueError`.
+        2.  **Verifies Attributes:** Calls `_verify_attribute_consistency` to ensure
+            that all series share the same attributes, such as `KVP`, `ConvolutionKernel`,
+            `IterativeAILevel`, etc. If any attribute is inconsistent, it raises a
+            `ValueError`. This is crucial for ensuring that the super-series can be
+            meaningfully analyzed as a single entity.
+            The attributes to be checked are defined in the `list_of_tags` variable.
+            If the attributes are not consistent, it raises a `ValueError`.
+        3.  **Aligns Geometry:** Calls `_align_and_check_clicelocations` to ensure
+            all series are spatially aligned along the z-axis. If accept_difference_positioning
+            is set to `False`, it performs a strict check that all series have identical
+            `SliceLocations`. If set to `True`, it allows for flexible alignment, where a common
+            overlapping region is determined. The remaining must be aligned within a specified
+            tolerance (`z_tolerance`). If the alignment fails, it raises a `ValueError`. Populates
+            the crop_borders attribute with the start and end indices of the common overlapping 
+            region for each series to facilitate cropping of the pixel data, mA curve, and CTDI 
+            olume curve.
+        4. **Generates Total mA Curve:** Calls `_generate_total_mA_curve` to compute the
+            cumulative mA curve across all series. This method sums the `mA_curve` attributes
+            of each `CTSeries` object, ensuring that the resulting curve corresponds to the ovelapping
+            slices in the super-series. If the `mA_curve` lists of the series have inconsistent lengths,
+            it raises a `ValueError`.
+        5. **Generates Total CTDI Volume Curve:** Calls `_generate_total_ctdi_vol_curve` to compute the
+            cumulative CTDI volume curve across all series. This method sums the `ctdi_vol_curve` attributes
+            of each `CTSeries` object, ensuring that the resulting curve corresponds to the overlapping
+            slices in the super-series. If the `ctdi_vol_curve` lists of the series have inconsistent lengths,
+            it raises a `ValueError`.
+
+        After this method completes, the instance is considered fully prepared
+        for analysis.
+
+        Side Effects
+        ------------
+        - Populates numerous attributes on the instance (e.g., `SliceLocations`,
+          `total_mA_curve` and 'total_ctdi_vol_curve').
+
+        Raises
+        ------
+        ValueError
+            Can be raised indirectly by the various helper methods if validation
+            or alignment fails.
+
+        Returns
+        -------
+        None
+            This method does not return a value; it modifies the instance in-place.               
         """
         if not isinstance(self.list_of_series, list):
             raise TypeError("CTSeries must be a list of CT series.")
@@ -73,19 +178,35 @@ class CTSuperSeries():
         self._generate_total_ctdi_vol_curve()
 
     def _verify_attribute_consistency(self, attribute_name: list[str]):
-        """
-        Verify that all CT series in the list have the same value for a given attribute.
+        """Verifies that a given set of attributes are consistent across all CT series.
+
+        This internal helper method iterates through a list of attribute names and
+        checks if the value of each attribute is identical for every `CTSeries`
+        object contained in `self.list_of_series`.
+
+        It uses the first series in the list as the reference. A special check is
+        included to correctly handle `NaN` (Not a Number) values, where two `NaN`s
+        are considered consistent, which is not the case with a standard `!=`
+        comparison.
+
+        This method is typically called from `__post_init__` to ensure the
+        homogeneity of the super-series before further processing.
 
         Parameters
         ----------
         attribute_names : list[str]
-            The names of all the attributes to check.
-            Every CT series in the list must have the same value for these attributes.
+            A list of attribute names (as strings) to check for consistency.
 
         Raises
         ------
         ValueError
-            If the attribute values are not consistent across all series.
+            If the value of any specified attribute is not the same across all
+            series in the list.
+
+        Returns
+        -------
+        None
+            This method does not return a value; it raises an exception on failure.
         """
         # Extract the first series to compare against.
         first_series = self.list_of_series[0]
@@ -109,51 +230,80 @@ class CTSuperSeries():
         logger.debug("All attributes are consistent across CT series.")
     
     def _align_and_check_slicelocations(self):
-        """Aligns series z-locations, verifies tolerance, and crops to a common region.
+        """Aligns, verifies, and crops the z-axis slice locations for all series.
 
-        This method aligns all series within the `list_of_series` based on their
-        z-axis positions. It uses the first series as the reference coordinate
-        system and has two modes of operation controlled by the
-        `accept_difference_positioning` instance attribute.
+        This is a critical internal method that ensures all series in the
+        super-series are spatially coherent along the z-axis. It uses the first
+        series as the reference coordinate system. Its behavior is controlled by
+        the `self.accept_difference_positioning` instance attribute.
 
-        In strict mode (`accept_difference_positioning=False`):
+        In Strict Mode (`accept_difference_positioning=False`):
+        - The method performs a simple, exact check.
         - It verifies that every series has a `z_location` list that is
-          identical to the reference series.
+          identical to the reference series' list.
+        - If any list differs, it raises a `ValueError`.
 
-        In flexible mode (`accept_difference_positioning=True`):
-        1.  Calculates the slice increment (distance between slices) from the
-            reference series.
-        2.  For each subsequent series, it determines the z-offset of its first
-            slice relative to the reference's first slice.
-        3.  Calculates an integer index shift based on the offset and increment.
-        4.  Checks if the index shift results in a valid overlap with the
-            reference series.
-        5.  Verifies that the z-locations of all aligned slices are within
-            `self.z_tolerance` of their corresponding reference slice.
-        6.  Crops the data to the common region where all series have valid,
-            overlapping slice data.
+        In Flexible Alignment Mode (`accept_difference_positioning=True`):
+        This mode handles complex cases where scans may have different starting
+        positions, different lengths, or both, but still share a common
+        overlapping region. The process is as follows:
+        1.  **Calculate increment:** The slice increment (distance between slices)
+            is calculated from the reference series.
+        2.  **Calculate Shift:** For each subsequent series, the physical z-offset
+            of its first slice is measured against the reference's first slice.
+            This offset is then converted into an integer *index shift* by
+            dividing by the slice increment.
+        3.  **Veriy Overlap:** The method checks that the index shift does not
+            exceed the number of slices in the reference or current series (depending on
+            the shift direction) to ensure there is sufficient overlap.
+            If the shift is too large, a `ValueError` is raised.
+        4.  **Extract First Similar Location:** The first slice of each series
+            is compared to the corresponding slice in the reference series based
+            on the calculated index shift. 
+        5.  **Check Tolerance:** The method checks that the first similar slice
+            is within `self.z_tolerance` of the reference slice's z-location.
+            If not, a `ValueError` is raised.
+        6.  **Store Indices:** The method stores the first and last slice index
+            in terms of the reference series' z-locations.
+        7.  **Find Common Overlap:** The method determines the common overlapping
+            region across all series by finding the maximum of the left indices
+            and the minimum of the right indices. If no common region exists,
+            a `ValueError` is raised.
+        8.  **Store SliceLocations:** The `SliceLocations` attribute of the
+            super-series is updated to reflect the common overlapping region.
+        9.  **Store Crop Borders:** The method stores the start and end indices
+            for the common overlapping region for each series in `self.crop_borders`.
 
-        This method is called from `__post_init__` to ensure the super-series
-        is spatially coherent before further processing.
+        Attributes
+        ----------
+        accept_difference_positioning : bool
+            Flag that controls whether to use strict or flexible alignment mode.
+        z_tolerance : float
+            The maximum allowed deviation (in mm) between a slice's SliceLocation and the
+            reference position in flexible mode.
 
         Side Effects
         ------------
-        - Updates `self.z_location` to a new list containing only the z-locations
-          of the common, overlapping slices after alignment and cropping.
-        - Updates `self.crop_borders` to reflect the indices of the slices
-          included in the super-series for each CT series.
+        - Updates `self.SliceLocations` to a new list containing only the slices
+          that are common to all series after alignment.
+        - Populates `self.crop_borders` with the start and end indices of the
+          common overlapping region for each series.
 
         Raises
         ------
         ValueError
-            - If the reference series has fewer than 2 slices (cannot determine
-              slice increment).
-            - In strict mode, if any series' z-locations do not match the
-              reference exactly.
-            - In flexible mode, if any aligned slice's z-position deviates from
-              the reference by more than `self.z_tolerance`.
-            - In flexible mode, if there is no common overlapping region across
-              all series after alignment.
+            - If the series do not have the same SliceLocation (Strict mode).
+            - If the SliceLocation increment is not positive (should be unnecessary).
+            - If the reference series has no slices (cannot do alignment).
+            - If there is no common overlapping region across all series.
+            - If the slices are not aligned within the specified `z_tolerance`
+            - If there is no common overlaping region after cropping (might be unnecessary).
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place, updating `self.SliceLocations`
+            and `self.crop_borders` attributes.
         """
         # Establish the first series' z-locations as the reference for the super-series.
         reference_z_loc = self.list_of_series[0].SliceLocations
@@ -186,7 +336,7 @@ class CTSuperSeries():
         right_ind.append(len(reference_z_loc)-1) # Holds the last index of the reference series.
 
         
-        # --- 2. Calculate Increment ---
+        # --- 1. Calculate Increment ---
         if len(reference_z_loc) > 1:
             # Calculate the increment between slices in the reference scan (These are sorted from ct_series and import dicom).
             increment = reference_z_loc[1] - reference_z_loc[0]
@@ -202,7 +352,7 @@ class CTSuperSeries():
         
 
         for series in self.list_of_series[1:]:
-            # --- 3. Calculate Z-Offset ---
+            # --- 2. Calculate Z-Offset ---
             # Calculate the offset in the SliceLocation of the first slice of the current series relative to the reference series.
             first_slice_z = series.SliceLocations[0]
             z_offset = first_slice_z - reference_z_loc[0]
@@ -216,7 +366,7 @@ class CTSuperSeries():
                 # If no increment, we cannot determine how to shift.
                 index_shift = 0
             
-            # --- 4. Test of there is sufficient overlap with the reference series ---
+            # --- 3. Test of there is sufficient overlap with the reference series ---
             overlap_error = False
             # If the index shift is positive, we need to check if the reference series has enough slices to accommodate the shift.
             if index_shift >= 0:
@@ -231,7 +381,7 @@ class CTSuperSeries():
                 raise ValueError(f"Series {series.SeriesIndex} has a z-location that is too far from the reference Series {self.list_of_series[0].SeriesIndex}. "
                                  f"Index shift {index_shift} exceeds the number of slices in the reference series.")
 
-            # --- 5. Extract the first similar location ---
+            # --- 4. Extract the first similar location ---
             # If the index shift is positive, we need to compare the first slice of the current series with the [index_shift] slice in the reference series.
             if index_shift >= 0:
                 first_similar_location_ref = reference_z_loc[index_shift]
@@ -241,18 +391,19 @@ class CTSuperSeries():
                 first_similar_location_ref = reference_z_loc[0]
                 first_similar_location_series = series.SliceLocations[abs(index_shift)]
             
-            # --- 6. Check if the first similar location is within tolerance ---
+            # --- 5. Check if the first similar location is within tolerance ---
             EPSILON = 1e-6  # Small value to avoid floating point precision issues.
             if not math.isclose(first_similar_location_ref, first_similar_location_series, abs_tol=self.z_tolerance + EPSILON):
                     raise ValueError(f"Series {series.SeriesIndex} has a z-location is out of tolerance with reference Series {self.list_of_series[0].SeriesIndex}. "
                                      f"First similar location {first_similar_location_series} is not within tolerance of {self.z_tolerance} mm from {first_similar_location_ref}.") 
 
+            # --- 6. Store the index coordinates (using the coordinates of the reference series) ---
             # Store the index of the first slice in terms of the reference series.
             left_ind.append(index_shift)  # Append the index shift for the current series.
             # Store the coordinate of the last slice in terms of the reference series.
             right_ind.append(len(series.SliceLocations)+index_shift-1)
 
-        # Find the common overlapping region across all series.
+        # --- 7. Find the common overlapping region --- 
         # The common region on the left side, the maximum shifted left index.
         common_left = max(left_ind) 
         # The common region on the right side is defined by the minimum of the right indices.
@@ -262,9 +413,11 @@ class CTSuperSeries():
             raise ValueError("No common overlapping region found across all series. "
                              "Check the z-locations and ensure they are within tolerance.")
 
-        # Store the slice locations of the cropped reference series:
+        # --- 8. Store the SliceLocations for the cropped overlapping region ---
         self.SliceLocations = reference_z_loc[common_left:common_right + 1]
         
+        # --- 9. Store the coordinates of the common overlapping region for each series (in terms of the current series) ---
+        # These coordinates will be used to crop the slices so that the remainind slices are from the common overlapping region.
         self.crop_borders = [[common_left, common_right]]  # Initialize with the common region for the reference series,
         for i, series in enumerate(self.list_of_series[1:], start=1):
             # Calculate the start and end indices for the current series based on the common overlapping region.
@@ -275,11 +428,33 @@ class CTSuperSeries():
         logger.debug(f"Aligned and checked SliceLocations with common region from {common_left} to {common_right}.")
     
     def _generate_total_mA_curve(self):
+        """Calculates the cumulative mA curve for the super-series.
+
+        This internal helper method iterates through all the `CTSeries` objects
+        in the `list_of_series` and sums their individual `mA_curve`
+        attributes on an element-wise basis. The result represents the total
+        tube current (mA) at each slice position across all scans.
+
+        This method assumes that the series have already been aligned and cropped
+        by `_align_and_check_z_locations`, ensuring that the curves correspond
+        to the same set of slices. It is typically called from `__post_init__`.
+
+        Side Effects
+        ------------
+        - Initializes and populates `self.total_mA_curve` with a list
+          of floats or ints representing the summed mA values.
+
+        Raises
+        ------
+        ValueError
+            If the `mA_curve` lists of the series have inconsistent lengths,
+            which would indicate an alignment issue.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place.
         """
-        Generate the total mA curve for the super series based on the individual series.
-        The total mA curve is a list of the total mA for each slice in the super series.
-        """
-        
         # Go through each series in the list and add the mA values to the total mA curve:
         # Initialize the total mA curve with zeros, with the same length as the number of slices in the super series.
         self.total_mA_curve = [0] * len(self.SliceLocations)
@@ -291,11 +466,33 @@ class CTSuperSeries():
             self.total_mA_curve = [x + y for x, y in zip(self.total_mA_curve, mA_curve)]
             
     def _generate_total_ctdi_vol_curve(self):
+        """Calculates the cumulative CTDIvol curve for the super-series.
+
+        This internal helper method iterates through all the `CTSeries` objects
+        in the `list_of_series` and sums their individual `ctdi_vol_curve`
+        attributes on an element-wise basis. The result represents the total
+        CTDIvol at each slice position across all scans.
+
+        This method assumes that the series have already been aligned and cropped
+        by `_align_and_check_z_locations`, ensuring that the curves correspond
+        to the same set of slices. It is typically called from `__post_init__`.
+
+        Side Effects
+        ------------
+        - Initializes and populates `self.total_ctdi_vol_curve` with a list
+          of floats representing the summed CTDIvol values.
+
+        Raises
+        ------
+        ValueError
+            If the `ctdi_vol_curve` lists of the series have inconsistent lengths,
+            which would indicate an alignment issue.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place.
         """
-        Generate the total CTDI volume curve for the super series based on the individual series.
-        The total CTDI volume curve is a list of the total CTDI volume for each slice in the super series.
-        """
-        
         # Go through each series in the list and add the CTDI volume values to the total CTDI volume curve:
         # Initialize the total CTDI volume curve with zeros, with the same length as the number of slices in the super series.
         self.total_ctdi_vol_curve = [0] * len(self.SliceLocations)
@@ -307,11 +504,46 @@ class CTSuperSeries():
             self.total_ctdi_vol_curve = [x + y for x, y in zip(self.total_ctdi_vol_curve, ctdi_vol_curve)]
     
     def generate_pixel_data_individual(self, path='Data'):
-        """
-        Generate the pixel data for each series in the super series.
-        The pixel data is a 4D array with shape (height, width, n_slices, n_series).
-        """
+        """Loads or reads the pixel data for each series and stacks them.
 
+        This method iterates through every `CTSeries` object in the super-series.
+        For each series, it ensures the pixel data is loaded into memory. It
+        first attempts to find and load a pre-existing .npy file from the
+        specified `path`. If no stored data is found, it falls back to reading
+        the pixel data from the original DICOM files.
+
+        After loading, it assumes the data for each series has been aligned and
+        cropped by the `_align_and_check_z_locations` method. It then stacks
+        all the individual 3D pixel data arrays into a single 4D NumPy array.
+
+        The resulting 4D array has the shape (height, width, n_slices, n_series).
+
+        Parameters
+        ----------
+        path : str, optional
+            The base directory to search for pre-stored .npy pixel data files,
+            by default 'Data'.
+
+        Side Effects
+        ------------
+        - Populates `self.pixel_data_individual` with a 4D NumPy array.
+        - May trigger file I/O operations as it loads data for each series.
+        - Modifies the state of individual `CTSeries` objects by loading their
+          pixel data into memory.
+
+        Raises
+        ------
+        FileNotFoundError
+            If a series is expected to have stored data but the file cannot be
+            found at the specified path.
+        ValueError
+            If a series has no pixel data and it cannot be read from DICOM files.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place.
+        """
         # Make sure all the series have pixel data available
         for series in self.list_of_series:
             # If the series does not have pixel data, try to find it.
@@ -340,9 +572,29 @@ class CTSuperSeries():
         logger.debug("Pixel data for individual series generated successfully.")
     
     def generate_mean_image(self, path='Data'):
-        """
-        Generate the pixel data for the super series.
-        The pixel data is a 3D array with shape (height, width, n_slices).
+        """Calculates the mean image from all individual series.
+
+        This method computes the mean on a pixel-by-pixel basis across all the
+        aligned CT series contained in `self.pixel_data_individual`. The
+        resulting 3D NumPy array represents the average of all the scans.
+
+        This method requires `self.pixel_data_individual` to be populated first,
+        typically by calling `generate_pixel_data_individual()`.
+
+        Side Effects
+        ------------
+        - Populates `self.pixel_data_super_series` with a 3D NumPy array
+          containing the mean image.
+
+        Raises
+        ------
+        ValueError
+            If `self.pixel_data_individual` has not been generated yet.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place.
         """
         if self.pixel_data_individual is None:
             logger.error("Pixel data for individual series has not been generated. Calling generate_pixel_data_individual() first.")
@@ -352,9 +604,30 @@ class CTSuperSeries():
         logger.debug("Pixel data for super series generated successfully.")
 
     def generate_std_image(self, path='Data'):
-        """
-        Generate the standard deviation image for the super series.
-        The pixel data is a 3D array with shape (height, width, n_slices).
+        """Calculates the standard deviation image from all individual series.
+
+        This method computes the standard deviation on a pixel-by-pixel basis
+        across all the aligned CT series contained in `self.pixel_data_individual`.
+        The resulting 3D NumPy array represents the variability between the scans,
+        where brighter pixels indicate higher standard deviation.
+
+        This method requires `self.pixel_data_individual` to be populated first,
+        typically by calling `generate_pixel_data_individual()`.
+
+        Side Effects
+        ------------
+        - Populates `self.pixel_data_std_series` with a 3D NumPy array containing
+          the standard deviation image.
+
+        Raises
+        ------
+        ValueError
+            If `self.pixel_data_individual` has not been generated yet.
+
+        Returns
+        -------
+        None
+            This method modifies the instance in-place.
         """
         if self.pixel_data_individual is None:
             logger.error("Pixel data for individual series has not been generated. Calling generate_pixel_data_individual() first.")
